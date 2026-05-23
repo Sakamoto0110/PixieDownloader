@@ -1,0 +1,25 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.userprefs
+
+# Runtime artifacts created next to the executable
+tools/
+cache/
+logs/
+settings.json
+settings.json.bak
+
+# NuGet
+*.nupkg
+packages/

@@ -1,0 +1,26 @@
+<Application x:Class="PixieDownloader.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:PixieDownloader"
+             xmlns:conv="clr-namespace:PixieDownloader.Converters">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/DarkPurple.xaml"/>
+                <ResourceDictionary Source="Themes/Controls.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+            <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis"/>
+            <conv:InverseBoolConverter x:Key="InverseBool"/>
+            <conv:NullToVisibilityConverter x:Key="NullToVis"/>
+            <conv:NotNullToVisibilityConverter x:Key="NotNullToVis"/>
+            <conv:DurationConverter x:Key="Duration"/>
+            <conv:StageToTextConverter x:Key="StageText"/>
+            <conv:LogLevelToBrushConverter x:Key="LogLevelBrush"/>
+            <conv:CountToBoolConverter x:Key="CountToBool"/>
+            <conv:ResourceKeyToBrushConverter x:Key="ResBrush"/>
+            <conv:PathToImageConverter x:Key="PathToImage"/>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

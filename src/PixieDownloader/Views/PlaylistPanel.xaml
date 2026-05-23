@@ -1,0 +1,80 @@
+<UserControl x:Class="PixieDownloader.Views.PlaylistPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PixieDownloader.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance vm:MainViewModel}"
+             d:DesignHeight="500" d:DesignWidth="600">
+    <Border Style="{StaticResource Card}" Padding="14">
+        <DockPanel>
+            <!-- Header -->
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Padding="10,5"
+                        Content="{Binding PlaylistToggleLabel}" Command="{Binding TogglePlaylistCollapsedCommand}"/>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding PlaylistItems.Count, StringFormat={}{0} itens}"
+                           Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="{Binding PlaylistTitle}" Style="{StaticResource SectionTitle}"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+            </DockPanel>
+
+            <!-- Toolbar -->
+            <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0" Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
+                         VerticalContentAlignment="Center" ToolTip="Filtrar por título ou canal"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
+                    <Button Content="Tudo" Style="{StaticResource GhostButton}" Padding="10,5" Command="{Binding SelectAllCommand}"/>
+                    <Button Content="Inverter" Style="{StaticResource GhostButton}" Padding="10,5" Margin="6,0,0,0" Command="{Binding InvertSelectionCommand}"/>
+                    <Button Content="Limpar" Style="{StaticResource GhostButton}" Padding="10,5" Margin="6,0,0,0" Command="{Binding ClearSelectionCommand}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Footer -->
+            <TextBlock DockPanel.Dock="Bottom" Margin="0,10,0,0" Style="{StaticResource Hint}" Text="{Binding SelectedCountText}"/>
+
+            <!-- Virtualized list -->
+            <ListBox ItemsSource="{Binding PlaylistView}"
+                     SelectedItem="{Binding SelectedPlaylistItem, Mode=TwoWay}"
+                     MaxHeight="{Binding PlaylistMaxHeight}"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:PlaylistItemViewModel}">
+                        <Grid Margin="6,5">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"/>
+
+                            <TextBlock Grid.Column="1" Text="{Binding IndexLabel}" Style="{StaticResource Hint}"
+                                       VerticalAlignment="Center" Margin="10,0" MinWidth="22"/>
+
+                            <Border Grid.Column="2" Width="68" Height="38" CornerRadius="4" Background="#000000" ClipToBounds="True">
+                                <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToImage}}" Stretch="UniformToFill"/>
+                            </Border>
+
+                            <StackPanel Grid.Column="3" VerticalAlignment="Center" Margin="12,0">
+                                <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding Uploader}" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+
+                            <TextBlock Grid.Column="4" Text="{Binding Duration, Converter={StaticResource Duration}}"
+                                       Style="{StaticResource Hint}" VerticalAlignment="Center"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+    </Border>
+</UserControl>

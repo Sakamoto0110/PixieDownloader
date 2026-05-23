@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet --version)",
+      "Bash(dotnet --list-sdks)",
+      "Bash(dotnet new *)",
+      "Bash(git --version)",
+      "Bash(dotnet build *)",
+      "Bash(dotnet add *)",
+      "Bash(dotnet test *)",
+      "PowerShell($exe = \"src\\\\PixieDownloader\\\\bin\\\\Debug\\\\net10.0-windows\\\\PixieDownloader.exe\"; $p = Start-Process -FilePath $exe -PassThru -RedirectStandardError \"smoke_err.txt\" -RedirectStandardOutput \"smoke_out.txt\"; Start-Sleep -Seconds 6; if \\($p.HasExited\\) { \"EXITED early. Code=$\\($p.ExitCode\\)\"; \"--- stderr ---\"; Get-Content smoke_err.txt -ErrorAction SilentlyContinue } else { \"RUNNING ok \\(pid $\\($p.Id\\)\\) — main window alive; stopping it now.\"; Stop-Process -Id $p.Id -Force })",
+      "Bash(where yt-dlp *)",
+      "Bash(where ffmpeg *)"
+    ]
+  }
+}
