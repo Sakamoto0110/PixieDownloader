@@ -1,7 +1,5 @@
 using System.Threading;
 using System.Windows;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using PixieDownloader.ViewModels;
 using YtDlpCore;
 
@@ -12,12 +10,13 @@ public partial class App : Application
     private const string MutexName = "PixieDownloader.SingleInstance.v1";
     private const string ActivateEventName = "PixieDownloader.Activate.v1";
 
-    private IHost? _host;
     private Mutex? _mutex;
     private EventWaitHandle? _activateEvent;
 
-    public static IServiceProvider Services =>
-        ((App)Current)._host?.Services ?? throw new InvalidOperationException("Host not built.");
+    // Composition root: services are created by hand (no DI container) and owned by App.
+    private SessionLogger? _logger;
+    private SettingsService? _settings;
+    private YtDlpService? _ytDlpService;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -34,21 +33,16 @@ public partial class App : Application
         }
         StartActivationListener();
 
-        // ───── Composition root ─────
-        var builder = Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton<SessionLogger>();
-        builder.Services.AddSingleton<SettingsService>(sp =>
-            new SettingsService(log: sp.GetRequiredService<SessionLogger>().Log));
-        builder.Services.AddSingleton<IYtDlpService>(sp =>
-            new YtDlpService(sp.GetRequiredService<SessionLogger>()));
-        builder.Services.AddSingleton<MainViewModel>();
-        builder.Services.AddSingleton<MainWindow>();
-        _host = builder.Build();
+        // ───── Composition root: wire the object graph by hand (no DI container) ─────
+        _logger = new SessionLogger();
+        _settings = new SettingsService(log: _logger.Log);
+        _ytDlpService = new YtDlpService(_logger);
+        var viewModel = new MainViewModel(_ytDlpService, _settings, _logger);
 
         // Load settings synchronously before the UI binds (fast, one small file, no window yet).
-        _host.Services.GetRequiredService<SettingsService>().LoadAsync().GetAwaiter().GetResult();
+        _settings.LoadAsync().GetAwaiter().GetResult();
 
-        var window = _host.Services.GetRequiredService<MainWindow>();
+        var window = new MainWindow(viewModel);
         MainWindow = window;
         window.Show();
     }
@@ -81,7 +75,10 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _host?.Dispose();
+        // Dispose in reverse dependency order; the logger flushes its JSON last.
+        _settings?.Dispose();
+        _ytDlpService?.Dispose();
+        _logger?.Dispose();
         _activateEvent?.Dispose();
         _mutex?.Dispose();
         base.OnExit(e);
