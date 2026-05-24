@@ -30,32 +30,32 @@ public partial class MainWindow : Window
         TryLoadLogo();
     }
 
-    /// <summary>Uses Assets/logo.png (if present) for the header badge and window/taskbar icon.</summary>
+    /// <summary>Uses Assets/logo.ico (if present) for the header badge and window/taskbar icon.</summary>
     private void TryLoadLogo()
     {
         try
         {
-            var info = Application.GetResourceStream(new Uri("pack://application:,,,/Assets/logo.png"));
+            var info = Application.GetResourceStream(new Uri("pack://application:,,,/Assets/logo.ico"));
             if (info?.Stream is not { } stream)
                 return;
 
-            var bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.StreamSource = stream;
-            bmp.EndInit();
-            bmp.Freeze();
+            // .ico is multi-resolution — decode and pick the largest frame for a crisp badge.
+            var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+            var frame = decoder.Frames.OrderByDescending(f => f.PixelWidth).FirstOrDefault();
+            if (frame is null)
+                return;
+            frame.Freeze();
 
-            LogoImage.Source = bmp;
-            Icon = bmp;
+            LogoImage.Source = frame;
+            Icon = frame;
 
-            // Logo is a transparent PNG — drop the purple badge fill and the "P" so it shows cleanly.
+            // Logo is transparent — drop the purple badge fill and the "P" so it shows cleanly.
             LogoBadge.Background = System.Windows.Media.Brushes.Transparent;
             LogoFallback.Visibility = Visibility.Collapsed;
         }
         catch
         {
-            // No logo.png in Assets yet — the "P" badge stays as the fallback.
+            // No logo.ico in Assets — the "P" badge stays as the fallback.
         }
     }
 

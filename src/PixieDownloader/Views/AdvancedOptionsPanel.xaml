@@ -8,12 +8,14 @@
              d:DataContext="{d:DesignInstance vm:MainViewModel}"
              d:DesignWidth="700">
     <StackPanel>
-        <!-- ── Template de saída ── -->
+        <!-- ── Pasta e organização de saída ── -->
         <Border Style="{StaticResource Card}" Padding="14" Margin="0,0,0,10">
             <StackPanel>
-                <TextBlock Text="Pasta e template de saída" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="Pasta e organização de saída" Style="{StaticResource SectionTitle}"/>
 
-                <Grid Margin="0,0,0,8">
+                <!-- Onde salvar -->
+                <TextBlock Text="Salvar em" Style="{StaticResource Label}" Margin="0,2,0,0"/>
+                <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -27,28 +29,84 @@
                             Command="{Binding OpenOutputFolderCommand}"/>
                 </Grid>
 
-                <TextBox Text="{Binding Settings.Paths.LastTemplate, UpdateSourceTrigger=PropertyChanged}"
-                         VerticalContentAlignment="Center" FontFamily="{StaticResource Font.Mono}"/>
-
-                <ItemsControl ItemsSource="{Binding TemplatePresets}" Margin="0,8,0,0">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
+                <!-- Como organizar -->
+                <TextBlock Text="Organizar arquivos" Style="{StaticResource Label}" Margin="0,14,0,0"/>
+                <ComboBox ItemsSource="{Binding TemplatePresets}"
+                          SelectedItem="{Binding SelectedOrganization, Mode=TwoWay}">
+                    <ComboBox.ItemTemplate>
                         <DataTemplate>
-                            <Button Content="{Binding Label}" Style="{StaticResource GhostButton}" Padding="9,4" Margin="0,0,6,6"
-                                    FontSize="12"
-                                    Command="{Binding DataContext.ApplyPresetCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                    CommandParameter="{Binding}"/>
+                            <TextBlock Text="{Binding Label}"/>
                         </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <TextBlock Text="Modelo personalizado — definido em “Modelo avançado” abaixo." Style="{StaticResource Hint}" Margin="0,4,0,0"
+                           Visibility="{Binding IsCustomTemplate, Converter={StaticResource BoolToVis}}"/>
 
-                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                    <TextBlock Text="Prévia: " Style="{StaticResource Hint}"/>
-                    <TextBlock Text="{Binding TemplatePreview}" Style="{StaticResource Hint}"
-                               FontFamily="{StaticResource Font.Mono}" TextTrimming="CharacterEllipsis"/>
-                </StackPanel>
+                <!-- Prévia do caminho final -->
+                <Border Background="{StaticResource Brush.Accent.Subtle}" CornerRadius="6" Padding="10,8" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Text="O arquivo será salvo como:" Style="{StaticResource Hint}"/>
+                        <TextBlock Text="{Binding TemplatePreview}" FontFamily="{StaticResource Font.Mono}" FontSize="12"
+                                   TextWrapping="Wrap" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Modelo avançado: pilha incremental de tokens -->
+                <Expander Header="Modelo avançado (montar por tokens)" Margin="0,12,0,0">
+                    <StackPanel Margin="0,8,0,0">
+                        <!-- Paleta: clique para empilhar -->
+                        <TextBlock Text="Clique para adicionar à pilha" Style="{StaticResource Label}"/>
+                        <ItemsControl ItemsSource="{Binding TokenPalette}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding Label}" Style="{StaticResource GhostButton}" Padding="9,4" Margin="0,0,6,6"
+                                            FontSize="12"
+                                            Command="{Binding DataContext.AddTokenCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                            CommandParameter="{Binding}"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Pilha atual -->
+                        <DockPanel Margin="0,8,0,0">
+                            <TextBlock Text="Pilha" Style="{StaticResource Label}" VerticalAlignment="Center"/>
+                            <Button DockPanel.Dock="Right" Content="Limpar" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12"
+                                    Margin="6,0,0,0" Command="{Binding ClearTokensCommand}"/>
+                            <Button DockPanel.Dock="Right" Content="Remover último" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12"
+                                    Command="{Binding RemoveLastTokenCommand}"/>
+                            <TextBlock/>
+                        </DockPanel>
+
+                        <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="6"
+                                Padding="8" Margin="0,4,0,0" MinHeight="40">
+                            <Grid>
+                                <TextBlock Text="(pilha vazia — adicione tokens acima)" Style="{StaticResource Hint}"
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding TemplateTokens.Count, Converter={StaticResource ZeroToVis}}"/>
+                                <ItemsControl ItemsSource="{Binding TemplateTokens}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{StaticResource Brush.Accent.Subtle}" CornerRadius="5" Padding="7,3" Margin="0,0,5,5">
+                                                <TextBlock Text="{Binding}" FontFamily="{StaticResource Font.Mono}" FontSize="12"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Grid>
+                        </Border>
+
+                        <!-- Texto cru (editável) -->
+                        <TextBlock Text="Template (texto)" Style="{StaticResource Label}" Margin="0,10,0,0"/>
+                        <TextBox Text="{Binding Settings.Paths.LastTemplate, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalContentAlignment="Center" FontFamily="{StaticResource Font.Mono}"/>
+                    </StackPanel>
+                </Expander>
             </StackPanel>
         </Border>
 

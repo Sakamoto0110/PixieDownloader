@@ -86,7 +86,7 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
     {
         var ytDlp = RequireYtDlp();
         Directory.CreateDirectory(request.OutputDirectory);
-        PrepareStagingDir(request.OutputDirectory);
+        PrepareStagingDir();
 
         var sw = Stopwatch.StartNew();
         var args = BuildDownloadArgs(request);
@@ -220,18 +220,18 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
     // ───────────────────────── Argument building ─────────────────────────
 
     /// <summary>
-    /// Hidden staging folder (under the output directory) where yt-dlp keeps all in-progress
+    /// Hidden staging folder (next to the executable) where yt-dlp keeps all in-progress
     /// junk — <c>.part</c> fragments, raw <c>.webm</c>/<c>.webp</c>, pre-embed thumbnails. Only the
-    /// finished file is moved out to the output directory. Same volume → the move is atomic.
+    /// finished file is moved out to the output directory.
     /// </summary>
-    internal static string GetStagingDir(string outputDirectory)
-        => Path.Combine(outputDirectory, ".~downloads");
+    internal static string GetStagingDir()
+        => Path.Combine(AppContext.BaseDirectory, ".~downloads");
 
-    private void PrepareStagingDir(string outputDirectory)
+    private void PrepareStagingDir()
     {
         try
         {
-            var di = Directory.CreateDirectory(GetStagingDir(outputDirectory));
+            var di = Directory.CreateDirectory(GetStagingDir());
             if (!di.Attributes.HasFlag(FileAttributes.Hidden))
                 di.Attributes |= FileAttributes.Hidden;
         }
@@ -253,7 +253,7 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
             "-f", "bestaudio/best",
             "-o", r.OutputTemplate,                         // relative template (may include subfolders)
             "-P", $"home:{r.OutputDirectory}",              // final files land here...
-            "-P", $"temp:{GetStagingDir(r.OutputDirectory)}", // ...intermediate junk stays hidden here
+            "-P", $"temp:{GetStagingDir()}",                // ...intermediate junk stays hidden, next to the .exe
             "--newline",            // emit progress on its own lines (cleaner parsing)
             "--no-mtime",
             "--retries", r.Advanced.Retries.ToString(),

@@ -9,9 +9,10 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
   </ItemGroup>
 
-  <!-- Drop a logo.png into Assets/ to brand the header and window icon (loaded if present). -->
+  <!-- Logo assets: the .ico brands the header badge (loaded via pack URI) and the .exe/window icon. -->
   <ItemGroup>
     <Resource Include="Assets\*.png" />
+    <Resource Include="Assets\*.ico" />
   </ItemGroup>
 
   <PropertyGroup>

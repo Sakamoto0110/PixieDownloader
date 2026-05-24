@@ -109,7 +109,7 @@
                             </Border>
 
                             <Grid Margin="0,0,0,10">
-                                <Border Style="{StaticResource Card}" MinHeight="150" VerticalAlignment="Top"
+                                <Border Style="{StaticResource Card}" MinHeight="84" Padding="12,14" VerticalAlignment="Top"
                                         Visibility="{Binding HasResult, Converter={StaticResource InverseBoolToVis}}">
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <TextBlock Text="Cole uma URL e clique em Analisar" Style="{StaticResource SectionTitle}"
@@ -219,7 +219,8 @@
 
                 <ProgressBar Grid.Column="1" VerticalAlignment="Center" Margin="16,0" Height="8"
                              Minimum="0" Maximum="100" Value="{Binding ProgressValue}"
-                             IsIndeterminate="{Binding IsIndeterminate}"/>
+                             IsIndeterminate="{Binding IsIndeterminate}"
+                             Visibility="{Binding ShowProgress, Converter={StaticResource BoolToVis}}"/>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Text="{Binding SpeedText}" Style="{StaticResource Hint}"

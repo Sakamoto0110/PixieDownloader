@@ -103,6 +103,14 @@ public sealed class CountToBoolConverter : IValueConverter
     public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => Binding.DoNothing;
 }
 
+/// <summary>Visible when an int count is 0 (e.g. empty-collection placeholders), Collapsed otherwise.</summary>
+public sealed class ZeroCountToVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type t, object? p, CultureInfo c)
+        => value is int n && n == 0 ? Visibility.Visible : Visibility.Collapsed;
+    public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => Binding.DoNothing;
+}
+
 /// <summary>Resolves a resource-key string (e.g. "Brush.Success") to the corresponding brush.</summary>
 public sealed class ResourceKeyToBrushConverter : IValueConverter
 {

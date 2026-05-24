@@ -23,6 +23,8 @@ public sealed partial class UiSettings : ObservableObject
     [ObservableProperty] private string _lastWindowState = "Normal";   // Normal | Maximized
     [ObservableProperty] private bool _advancedPanelExpanded;
     [ObservableProperty] private bool _debugPanelEnabled;
+    [ObservableProperty] private bool _treatAsPlaylist = true;   // analyse list URLs as playlists by default
+    [ObservableProperty] private bool _previewCollapsed;         // collapsed state of the preview sidebar
 }
 
 public sealed partial class WindowSize : ObservableObject

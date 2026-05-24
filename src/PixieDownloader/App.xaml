@@ -19,6 +19,7 @@
             <conv:StageToTextConverter x:Key="StageText"/>
             <conv:LogLevelToBrushConverter x:Key="LogLevelBrush"/>
             <conv:CountToBoolConverter x:Key="CountToBool"/>
+            <conv:ZeroCountToVisibilityConverter x:Key="ZeroToVis"/>
             <conv:ResourceKeyToBrushConverter x:Key="ResBrush"/>
             <conv:PathToImageConverter x:Key="PathToImage"/>
         </ResourceDictionary>

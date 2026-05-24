@@ -33,6 +33,10 @@ public sealed partial class MainViewModel : ObservableObject
         _logger = logger;
         _dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
 
+        // Restore persisted UI toggles (direct field writes → no side effects on startup).
+        _treatAsPlaylist = Settings.Ui.TreatAsPlaylist;
+        _isPreviewCollapsed = Settings.Ui.PreviewCollapsed;
+
         PlaylistView = CollectionViewSource.GetDefaultView(PlaylistItems);
         PlaylistView.Filter = FilterPlaylistItem;
 
@@ -41,7 +45,19 @@ public sealed partial class MainViewModel : ObservableObject
 
         // Persist + re-render when settings nodes change.
         Settings.Advanced.PropertyChanged += OnAdvancedSettingsChanged;
-        Settings.Paths.PropertyChanged += (_, _) => UpdateTemplatePreview();
+        Settings.Paths.PropertyChanged += OnPathsSettingsChanged;
+
+        // Show the progress bar while a tool install/update is running, too.
+        YtDlp.PropertyChanged += OnToolStatusChanged;
+        Ffmpeg.PropertyChanged += OnToolStatusChanged;
+
+        // Advanced template builder: seed the token stack and keep the stack buttons in sync.
+        TemplateTokens.CollectionChanged += (_, _) =>
+        {
+            RemoveLastTokenCommand.NotifyCanExecuteChanged();
+            ClearTokensCommand.NotifyCanExecuteChanged();
+        };
+        SyncTokensFromTemplate();
     }
 
     // ───────────────────────── View interaction hooks (set by MainWindow) ─────────────────────────
@@ -57,13 +73,115 @@ public sealed partial class MainViewModel : ObservableObject
     public string[] BitrateOptions { get; } = ["128k", "192k", "320k"];
     public LogLevel[] LogLevelOptions { get; } = [LogLevel.Debug, LogLevel.Info, LogLevel.Warning, LogLevel.Error];
 
+    /// <summary>Friendly output-organization choices; each maps to a yt-dlp output template.</summary>
     public IReadOnlyList<TemplatePreset> TemplatePresets { get; } =
     [
-        new("Título", "%(title)s.%(ext)s"),
-        new("Playlist / índice - título", "%(playlist_title)s/%(playlist_index)02d - %(title)s.%(ext)s"),
-        new("Por canal", "%(uploader)s/%(title)s.%(ext)s"),
-        new("Por data", "%(upload_date)s - %(title)s.%(ext)s"),
+        new("Sem subpastas (tudo junto)", "%(title)s.%(ext)s"),
+        new("Subpasta por playlist", "%(playlist_title)s/%(playlist_index)02d - %(title)s.%(ext)s"),
+        new("Subpasta por canal", "%(uploader)s/%(title)s.%(ext)s"),
+        new("Prefixo por data", "%(upload_date)s - %(title)s.%(ext)s"),
     ];
+
+    /// <summary>
+    /// The organization preset that matches the current template, or <c>null</c> when the template
+    /// was hand-edited (in the advanced field) to something custom. Setting it rewrites the template.
+    /// </summary>
+    public TemplatePreset? SelectedOrganization
+    {
+        get => TemplatePresets.FirstOrDefault(p => string.Equals(p.Template, Settings.Paths.LastTemplate, StringComparison.Ordinal));
+        set
+        {
+            if (value is not null && !string.Equals(value.Template, Settings.Paths.LastTemplate, StringComparison.Ordinal))
+                Settings.Paths.LastTemplate = value.Template;  // Paths change handler refreshes preview + this prop
+        }
+    }
+
+    /// <summary>True when the template doesn't match any organization preset (edited in Advanced).</summary>
+    public bool IsCustomTemplate => SelectedOrganization is null;
+
+    // ───────────────────────── Advanced template: incremental token stack ─────────────────────────
+
+    /// <summary>Palette of building blocks shown in the advanced editor (fields + separators).</summary>
+    public IReadOnlyList<TokenOption> TokenPalette { get; } =
+    [
+        new("Título", "%(title)s"),
+        new("Canal", "%(uploader)s"),
+        new("Playlist", "%(playlist_title)s"),
+        new("Nº playlist", "%(playlist_index)02d"),
+        new("Data", "%(upload_date)s"),
+        new("ID", "%(id)s"),
+        new("Extensão", "%(ext)s"),
+        new("/ (subpasta)", "/"),
+        new("- (hífen)", " - "),
+        new(". (ponto)", "."),
+        new("_ (underline)", "_"),
+    ];
+
+    /// <summary>The template broken into an ordered stack of segments (fields + literals).</summary>
+    public ObservableCollection<string> TemplateTokens { get; } = [];
+
+    private bool _suppressTokenSync;
+    private bool HasTokens => TemplateTokens.Count > 0;
+
+    [RelayCommand]
+    private void AddToken(TokenOption? token)
+    {
+        if (token is null) return;
+        TemplateTokens.Add(token.Value);
+        RebuildTemplateFromTokens();
+    }
+
+    [RelayCommand(CanExecute = nameof(HasTokens))]
+    private void RemoveLastToken()
+    {
+        if (TemplateTokens.Count == 0) return;
+        TemplateTokens.RemoveAt(TemplateTokens.Count - 1);
+        RebuildTemplateFromTokens();
+    }
+
+    [RelayCommand(CanExecute = nameof(HasTokens))]
+    private void ClearTokens()
+    {
+        TemplateTokens.Clear();
+        RebuildTemplateFromTokens();
+    }
+
+    /// <summary>Writes the concatenated stack back to the template (guarded against re-tokenizing).</summary>
+    private void RebuildTemplateFromTokens()
+    {
+        _suppressTokenSync = true;
+        Settings.Paths.LastTemplate = string.Concat(TemplateTokens);
+        _suppressTokenSync = false;
+    }
+
+    /// <summary>Re-derives the token stack from the template (combo pick, manual edit, or load).</summary>
+    private void SyncTokensFromTemplate()
+    {
+        if (_suppressTokenSync) return;
+        _suppressTokenSync = true;
+        TemplateTokens.Clear();
+        foreach (var seg in TokenizeTemplate(Settings.Paths.LastTemplate))
+            TemplateTokens.Add(seg);
+        _suppressTokenSync = false;
+    }
+
+    /// <summary>Splits a template into yt-dlp field tokens (e.g. <c>%(title)s</c>) and the literals between them.</summary>
+    private static IEnumerable<string> TokenizeTemplate(string template)
+    {
+        if (string.IsNullOrEmpty(template))
+            yield break;
+
+        int last = 0;
+        foreach (Match m in Regex.Matches(template, @"%\(\w+\)(?:0\d+)?[sd]"))
+        {
+            if (m.Index > last)
+                yield return template[last..m.Index];   // literal chunk
+            yield return m.Value;                        // field token
+            last = m.Index + m.Length;
+        }
+        if (last < template.Length)
+            yield return template[last..];
+    }
 
     // ───────────────────────── URL analysis state ─────────────────────────
     [ObservableProperty]
@@ -77,6 +195,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnTreatAsPlaylistChanged(bool value)
     {
+        Settings.Ui.TreatAsPlaylist = value;   // persisted (debounced) by SettingsService
         // Re-analyse the current URL under the new mode.
         if (!string.IsNullOrWhiteSpace(Url) && AnalyzeCommand.CanExecute(null))
             AnalyzeCommand.Execute(null);
@@ -112,6 +231,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(AnalyzeCommand))]
     [NotifyCanExecuteChangedFor(nameof(DownloadCommand))]
+    [NotifyPropertyChangedFor(nameof(ShowProgress))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -166,6 +286,8 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _isPreviewCollapsed;
     public GridLength PreviewColumnWidth => IsPreviewCollapsed ? new GridLength(40) : new GridLength(370);
 
+    partial void OnIsPreviewCollapsedChanged(bool value) => Settings.Ui.PreviewCollapsed = value;
+
     [RelayCommand] private void TogglePreviewCollapsed() => IsPreviewCollapsed = !IsPreviewCollapsed;
 
     [RelayCommand]
@@ -199,12 +321,19 @@ public sealed partial class MainViewModel : ObservableObject
     // ───────────────────────── Status bar / progress ─────────────────────────
     [ObservableProperty] private string _statusText = "Pronto";
     [ObservableProperty] private double _progressValue;
-    [ObservableProperty] private bool _isIndeterminate;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowProgress))]
+    private bool _isIndeterminate;
+
+    /// <summary>The progress bar is only shown while something is actually running (idle = hidden).</summary>
+    public bool ShowProgress => IsBusy || IsDownloading || IsIndeterminate || YtDlp.IsWorking || Ffmpeg.IsWorking;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DownloadCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
     [NotifyCanExecuteChangedFor(nameof(AnalyzeCommand))]
+    [NotifyPropertyChangedFor(nameof(ShowProgress))]
     private bool _isDownloading;
 
     [ObservableProperty] private string? _speedText;
@@ -597,16 +726,6 @@ public sealed partial class MainViewModel : ObservableObject
             OpenUrl?.Invoke(url);
     }
 
-    [RelayCommand]
-    private void ApplyPreset(TemplatePreset? preset)
-    {
-        if (preset is not null)
-        {
-            Settings.Paths.LastTemplate = preset.Template;
-            UpdateTemplatePreview();
-        }
-    }
-
     // ═════════════════════════ Debug commands ═════════════════════════
     [RelayCommand] private Task Simulate() => RunDebugAsync(["--simulate", DebugUrl]);
     [RelayCommand] private Task GetFilename() => RunDebugAsync(["--get-filename", "-o", Settings.Paths.LastTemplate, DebugUrl]);
@@ -653,6 +772,23 @@ public sealed partial class MainViewModel : ObservableObject
     private void AppendDebug(string text) => DebugOutput += text + Environment.NewLine;
 
     // ═════════════════════════ Helpers ═════════════════════════
+    private void OnToolStatusChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ToolStatusViewModel.IsWorking))
+            OnPropertyChanged(nameof(ShowProgress));
+    }
+
+    private void OnPathsSettingsChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        UpdateTemplatePreview();
+        if (e.PropertyName is nameof(PathSettings.LastTemplate) or null)
+        {
+            OnPropertyChanged(nameof(SelectedOrganization));
+            OnPropertyChanged(nameof(IsCustomTemplate));
+            SyncTokensFromTemplate();   // no-op while we're the ones rewriting the template
+        }
+    }
+
     private void OnAdvancedSettingsChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(AdvancedSettings.ParallelDownloads))
@@ -789,3 +925,6 @@ public sealed partial class MainViewModel : ObservableObject
 }
 
 public sealed record TemplatePreset(string Label, string Template);
+
+/// <summary>A building block for the advanced template editor: a friendly label + the segment it appends.</summary>
+public sealed record TokenOption(string Label, string Value);
