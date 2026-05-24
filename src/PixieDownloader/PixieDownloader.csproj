@@ -4,10 +4,6 @@
     <ProjectReference Include="..\YtDlpCore\YtDlpCore.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-  </ItemGroup>
-
   <!-- Logo assets: the .ico brands the header badge (loaded via pack URI) and the .exe/window icon. -->
   <ItemGroup>
     <Resource Include="Assets\*.png" />

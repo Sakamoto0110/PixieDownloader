@@ -1,18 +1,28 @@
-using CommunityToolkit.Mvvm.ComponentModel;
 using YtDlpCore;
 
 namespace PixieDownloader.ViewModels;
 
 /// <summary>Row in the playlist list: a video plus its selection state and lazily-loaded thumbnail.</summary>
-public sealed partial class PlaylistItemViewModel : ObservableObject
+public sealed class PlaylistItemViewModel : ObservableObject
 {
     public VideoInfo Video { get; }
 
     /// <summary>1-based position in the original playlist (used for <c>--playlist-items</c>).</summary>
     public int Index { get; }
 
-    [ObservableProperty] private bool _isSelected = true;
-    [ObservableProperty] private string? _thumbnailPath;
+    private bool _isSelected = true;
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetProperty(ref _isSelected, value);
+    }
+
+    private string? _thumbnailPath;
+    public string? ThumbnailPath
+    {
+        get => _thumbnailPath;
+        set => SetProperty(ref _thumbnailPath, value);
+    }
 
     public PlaylistItemViewModel(VideoInfo video, int index)
     {

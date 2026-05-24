@@ -7,13 +7,12 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
-using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
+using PixieDownloader.Mvvm;
 using YtDlpCore;
 
 namespace PixieDownloader.ViewModels;
 
-public sealed partial class MainViewModel : ObservableObject
+public sealed class MainViewModel : ObservableObject
 {
     private readonly IYtDlpService _service;
     private readonly SettingsService _settings;
@@ -32,6 +31,43 @@ public sealed partial class MainViewModel : ObservableObject
         _settings = settings;
         _logger = logger;
         _dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+
+        // ───────────────────────── Commands ─────────────────────────
+        AddTokenCommand = new RelayCommand<TokenOption>(AddToken);
+        RemoveLastTokenCommand = new RelayCommand(RemoveLastToken, () => HasTokens);
+        ClearTokensCommand = new RelayCommand(ClearTokens, () => HasTokens);
+        TogglePlaylistCollapsedCommand = new RelayCommand(TogglePlaylistCollapsed);
+        TogglePreviewCollapsedCommand = new RelayCommand(TogglePreviewCollapsed);
+        OpenPreviewCommand = new RelayCommand(OpenPreview);
+        AnalyzeCommand = new AsyncRelayCommand(AnalyzeAsync, CanAnalyze);
+        UseRecentCommand = new RelayCommand<RecentUrl>(UseRecent);
+        SelectAllCommand = new RelayCommand(SelectAll);
+        ClearSelectionCommand = new RelayCommand(ClearSelection);
+        InvertSelectionCommand = new RelayCommand(InvertSelection);
+        DownloadCommand = new AsyncRelayCommand(DownloadAsync, CanDownload);
+        CancelCommand = new RelayCommand(Cancel, CanCancel);
+        InstallYtDlpCommand = new AsyncRelayCommand(InstallYtDlpAsync);
+        InstallFfmpegCommand = new AsyncRelayCommand(InstallFfmpegAsync);
+        CheckUpdateCommand = new AsyncRelayCommand(CheckUpdateAsync);
+        UpdateYtDlpCommand = new AsyncRelayCommand(UpdateYtDlpAsync);
+        BrowseOutputDirectoryCommand = new RelayCommand(BrowseOutputDirectory);
+        BrowseCookiesFileCommand = new RelayCommand(BrowseCookiesFile);
+        ClearCookiesCommand = new RelayCommand(ClearCookies);
+        OpenLogsFolderCommand = new RelayCommand(OpenLogsFolder);
+        OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder);
+        OpenReleasePageCommand = new RelayCommand(OpenReleasePage);
+        SimulateCommand = new AsyncRelayCommand(Simulate);
+        GetFilenameCommand = new AsyncRelayCommand(GetFilename);
+        GetTitleCommand = new AsyncRelayCommand(GetTitle);
+        GetDurationCommand = new AsyncRelayCommand(GetDuration);
+        GetThumbnailCommand = new AsyncRelayCommand(GetThumbnail);
+        GetDirectUrlCommand = new AsyncRelayCommand(GetDirectUrl);
+        GetIdCommand = new AsyncRelayCommand(GetId);
+        ListFormatsCommand = new AsyncRelayCommand(ListFormats);
+        DumpJsonCommand = new AsyncRelayCommand(DumpJson);
+        RunRawCommand = new AsyncRelayCommand(RunRaw);
+        ClearOutputCommand = new RelayCommand(ClearOutput);
+        CopyOutputCommand = new RelayCommand(CopyOutput);
 
         // Restore persisted UI toggles (direct field writes → no side effects on startup).
         _treatAsPlaylist = Settings.Ui.TreatAsPlaylist;
@@ -59,6 +95,43 @@ public sealed partial class MainViewModel : ObservableObject
         };
         SyncTokensFromTemplate();
     }
+
+    // ───────────────────────── Commands (initialized in the constructor) ─────────────────────────
+    public RelayCommand<TokenOption> AddTokenCommand { get; }
+    public RelayCommand RemoveLastTokenCommand { get; }
+    public RelayCommand ClearTokensCommand { get; }
+    public RelayCommand TogglePlaylistCollapsedCommand { get; }
+    public RelayCommand TogglePreviewCollapsedCommand { get; }
+    public RelayCommand OpenPreviewCommand { get; }
+    public AsyncRelayCommand AnalyzeCommand { get; }
+    public RelayCommand<RecentUrl> UseRecentCommand { get; }
+    public RelayCommand SelectAllCommand { get; }
+    public RelayCommand ClearSelectionCommand { get; }
+    public RelayCommand InvertSelectionCommand { get; }
+    public AsyncRelayCommand DownloadCommand { get; }
+    public RelayCommand CancelCommand { get; }
+    public AsyncRelayCommand InstallYtDlpCommand { get; }
+    public AsyncRelayCommand InstallFfmpegCommand { get; }
+    public AsyncRelayCommand CheckUpdateCommand { get; }
+    public AsyncRelayCommand UpdateYtDlpCommand { get; }
+    public RelayCommand BrowseOutputDirectoryCommand { get; }
+    public RelayCommand BrowseCookiesFileCommand { get; }
+    public RelayCommand ClearCookiesCommand { get; }
+    public RelayCommand OpenLogsFolderCommand { get; }
+    public RelayCommand OpenOutputFolderCommand { get; }
+    public RelayCommand OpenReleasePageCommand { get; }
+    public AsyncRelayCommand SimulateCommand { get; }
+    public AsyncRelayCommand GetFilenameCommand { get; }
+    public AsyncRelayCommand GetTitleCommand { get; }
+    public AsyncRelayCommand GetDurationCommand { get; }
+    public AsyncRelayCommand GetThumbnailCommand { get; }
+    public AsyncRelayCommand GetDirectUrlCommand { get; }
+    public AsyncRelayCommand GetIdCommand { get; }
+    public AsyncRelayCommand ListFormatsCommand { get; }
+    public AsyncRelayCommand DumpJsonCommand { get; }
+    public AsyncRelayCommand RunRawCommand { get; }
+    public RelayCommand ClearOutputCommand { get; }
+    public RelayCommand CopyOutputCommand { get; }
 
     // ───────────────────────── View interaction hooks (set by MainWindow) ─────────────────────────
     public Func<string?, string?>? PickFolder { get; set; }
@@ -123,7 +196,6 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _suppressTokenSync;
     private bool HasTokens => TemplateTokens.Count > 0;
 
-    [RelayCommand]
     private void AddToken(TokenOption? token)
     {
         if (token is null) return;
@@ -131,7 +203,6 @@ public sealed partial class MainViewModel : ObservableObject
         RebuildTemplateFromTokens();
     }
 
-    [RelayCommand(CanExecute = nameof(HasTokens))]
     private void RemoveLastToken()
     {
         if (TemplateTokens.Count == 0) return;
@@ -139,7 +210,6 @@ public sealed partial class MainViewModel : ObservableObject
         RebuildTemplateFromTokens();
     }
 
-    [RelayCommand(CanExecute = nameof(HasTokens))]
     private void ClearTokens()
     {
         TemplateTokens.Clear();
@@ -184,16 +254,35 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     // ───────────────────────── URL analysis state ─────────────────────────
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(AnalyzeCommand))]
     private string _url = "";
+    public string Url
+    {
+        get => _url;
+        set
+        {
+            if (SetProperty(ref _url, value))
+            {
+                AnalyzeCommand.NotifyCanExecuteChanged();
+                OnUrlChanged(value);
+            }
+        }
+    }
 
-    partial void OnUrlChanged(string value) => ScheduleAutoAnalyze(value);
+    private void OnUrlChanged(string value) => ScheduleAutoAnalyze(value);
 
     /// <summary>When true, a URL with a list is analysed as a playlist; when false, as a single video.</summary>
-    [ObservableProperty] private bool _treatAsPlaylist = true;
+    private bool _treatAsPlaylist = true;
+    public bool TreatAsPlaylist
+    {
+        get => _treatAsPlaylist;
+        set
+        {
+            if (SetProperty(ref _treatAsPlaylist, value))
+                OnTreatAsPlaylistChanged(value);
+        }
+    }
 
-    partial void OnTreatAsPlaylistChanged(bool value)
+    private void OnTreatAsPlaylistChanged(bool value)
     {
         Settings.Ui.TreatAsPlaylist = value;   // persisted (debounced) by SettingsService
         // Re-analyse the current URL under the new mode.
@@ -228,35 +317,93 @@ public sealed partial class MainViewModel : ObservableObject
         });
     }
 
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(AnalyzeCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DownloadCommand))]
-    [NotifyPropertyChangedFor(nameof(ShowProgress))]
     private bool _isBusy;
+    public bool IsBusy
+    {
+        get => _isBusy;
+        set
+        {
+            if (SetProperty(ref _isBusy, value))
+            {
+                AnalyzeCommand.NotifyCanExecuteChanged();
+                DownloadCommand.NotifyCanExecuteChanged();
+                OnPropertyChanged(nameof(ShowProgress));
+            }
+        }
+    }
 
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(DownloadCommand))]
     private bool _hasResult;
+    public bool HasResult
+    {
+        get => _hasResult;
+        set
+        {
+            if (SetProperty(ref _hasResult, value))
+                DownloadCommand.NotifyCanExecuteChanged();
+        }
+    }
 
-    [ObservableProperty] private bool _isPlaylist;
+    private bool _isPlaylist;
+    public bool IsPlaylist
+    {
+        get => _isPlaylist;
+        set => SetProperty(ref _isPlaylist, value);
+    }
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(PreviewUrl))]
     private VideoInfo? _singleVideo;
+    public VideoInfo? SingleVideo
+    {
+        get => _singleVideo;
+        set
+        {
+            if (SetProperty(ref _singleVideo, value))
+                OnPropertyChanged(nameof(PreviewUrl));
+        }
+    }
 
-    [ObservableProperty] private string? _playlistTitle;
-    [ObservableProperty] private string? _playlistUploader;
+    private string? _playlistTitle;
+    public string? PlaylistTitle
+    {
+        get => _playlistTitle;
+        set => SetProperty(ref _playlistTitle, value);
+    }
+
+    private string? _playlistUploader;
+    public string? PlaylistUploader
+    {
+        get => _playlistUploader;
+        set => SetProperty(ref _playlistUploader, value);
+    }
 
     public ObservableCollection<PlaylistItemViewModel> PlaylistItems { get; } = [];
     public ICollectionView PlaylistView { get; }
 
-    [ObservableProperty] private string _filterText = "";
-    partial void OnFilterTextChanged(string value) => PlaylistView.Refresh();
+    private string _filterText = "";
+    public string FilterText
+    {
+        get => _filterText;
+        set
+        {
+            if (SetProperty(ref _filterText, value))
+                OnFilterTextChanged(value);
+        }
+    }
+    private void OnFilterTextChanged(string value) => PlaylistView.Refresh();
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(PreviewUrl))]
     private PlaylistItemViewModel? _selectedPlaylistItem;
-    partial void OnSelectedPlaylistItemChanged(PlaylistItemViewModel? value)
+    public PlaylistItemViewModel? SelectedPlaylistItem
+    {
+        get => _selectedPlaylistItem;
+        set
+        {
+            if (SetProperty(ref _selectedPlaylistItem, value))
+            {
+                OnPropertyChanged(nameof(PreviewUrl));
+                OnSelectedPlaylistItemChanged(value);
+            }
+        }
+    }
+    private void OnSelectedPlaylistItemChanged(PlaylistItemViewModel? value)
     {
         if (value is not null)
             _ = LoadPreviewThumbnailAsync(value.Id, value.ThumbnailUrl);
@@ -266,31 +413,54 @@ public sealed partial class MainViewModel : ObservableObject
     public string SelectedCountText => $"{SelectedCount} de {PlaylistItems.Count} selecionados";
 
     // Collapsible list: ~5 rows when collapsed, full (scrollable) when expanded.
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(PlaylistMaxHeight))]
-    [NotifyPropertyChangedFor(nameof(PlaylistToggleLabel))]
     private bool _isPlaylistCollapsed;
+    public bool IsPlaylistCollapsed
+    {
+        get => _isPlaylistCollapsed;
+        set
+        {
+            if (SetProperty(ref _isPlaylistCollapsed, value))
+            {
+                OnPropertyChanged(nameof(PlaylistMaxHeight));
+                OnPropertyChanged(nameof(PlaylistToggleLabel));
+            }
+        }
+    }
     public double PlaylistMaxHeight => IsPlaylistCollapsed ? 268 : 520;
     public string PlaylistToggleLabel => IsPlaylistCollapsed ? "Expandir" : "Recolher";
 
-    [RelayCommand] private void TogglePlaylistCollapsed() => IsPlaylistCollapsed = !IsPlaylistCollapsed;
+    private void TogglePlaylistCollapsed() => IsPlaylistCollapsed = !IsPlaylistCollapsed;
 
     // ───────────────────────── Preview ─────────────────────────
-    [ObservableProperty] private string? _previewThumbnailPath;
+    private string? _previewThumbnailPath;
+    public string? PreviewThumbnailPath
+    {
+        get => _previewThumbnailPath;
+        set => SetProperty(ref _previewThumbnailPath, value);
+    }
 
     /// <summary>Webpage URL of the currently previewed item (opened when the preview is clicked).</summary>
     public string? PreviewUrl => SelectedPlaylistItem?.WebpageUrl ?? SingleVideo?.WebpageUrl;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(PreviewColumnWidth))]
     private bool _isPreviewCollapsed;
+    public bool IsPreviewCollapsed
+    {
+        get => _isPreviewCollapsed;
+        set
+        {
+            if (SetProperty(ref _isPreviewCollapsed, value))
+            {
+                OnPropertyChanged(nameof(PreviewColumnWidth));
+                OnIsPreviewCollapsedChanged(value);
+            }
+        }
+    }
     public GridLength PreviewColumnWidth => IsPreviewCollapsed ? new GridLength(40) : new GridLength(370);
 
-    partial void OnIsPreviewCollapsedChanged(bool value) => Settings.Ui.PreviewCollapsed = value;
+    private void OnIsPreviewCollapsedChanged(bool value) => Settings.Ui.PreviewCollapsed = value;
 
-    [RelayCommand] private void TogglePreviewCollapsed() => IsPreviewCollapsed = !IsPreviewCollapsed;
+    private void TogglePreviewCollapsed() => IsPreviewCollapsed = !IsPreviewCollapsed;
 
-    [RelayCommand]
     private void OpenPreview()
     {
         if (!string.IsNullOrWhiteSpace(PreviewUrl))
@@ -298,7 +468,12 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     // ───────────────────────── Output template ─────────────────────────
-    [ObservableProperty] private string _templatePreview = "";
+    private string _templatePreview = "";
+    public string TemplatePreview
+    {
+        get => _templatePreview;
+        set => SetProperty(ref _templatePreview, value);
+    }
 
     // ───────────────────────── Advanced (max duration text proxy) ─────────────────────────
     public string MaxDurationText
@@ -319,50 +494,153 @@ public sealed partial class MainViewModel : ObservableObject
     public bool ParallelWarning => Settings.Advanced.ParallelDownloads > 5;
 
     // ───────────────────────── Status bar / progress ─────────────────────────
-    [ObservableProperty] private string _statusText = "Pronto";
-    [ObservableProperty] private double _progressValue;
+    private string _statusText = "Pronto";
+    public string StatusText
+    {
+        get => _statusText;
+        set => SetProperty(ref _statusText, value);
+    }
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowProgress))]
+    private double _progressValue;
+    public double ProgressValue
+    {
+        get => _progressValue;
+        set => SetProperty(ref _progressValue, value);
+    }
+
     private bool _isIndeterminate;
+    public bool IsIndeterminate
+    {
+        get => _isIndeterminate;
+        set
+        {
+            if (SetProperty(ref _isIndeterminate, value))
+                OnPropertyChanged(nameof(ShowProgress));
+        }
+    }
 
     /// <summary>The progress bar is only shown while something is actually running (idle = hidden).</summary>
     public bool ShowProgress => IsBusy || IsDownloading || IsIndeterminate || YtDlp.IsWorking || Ffmpeg.IsWorking;
 
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(DownloadCommand))]
-    [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
-    [NotifyCanExecuteChangedFor(nameof(AnalyzeCommand))]
-    [NotifyPropertyChangedFor(nameof(ShowProgress))]
     private bool _isDownloading;
+    public bool IsDownloading
+    {
+        get => _isDownloading;
+        set
+        {
+            if (SetProperty(ref _isDownloading, value))
+            {
+                DownloadCommand.NotifyCanExecuteChanged();
+                CancelCommand.NotifyCanExecuteChanged();
+                AnalyzeCommand.NotifyCanExecuteChanged();
+                OnPropertyChanged(nameof(ShowProgress));
+            }
+        }
+    }
 
-    [ObservableProperty] private string? _speedText;
-    [ObservableProperty] private string? _etaText;
-    [ObservableProperty] private int _batchCurrent;
-    [ObservableProperty] private int _batchTotal;
+    private string? _speedText;
+    public string? SpeedText
+    {
+        get => _speedText;
+        set => SetProperty(ref _speedText, value);
+    }
+
+    private string? _etaText;
+    public string? EtaText
+    {
+        get => _etaText;
+        set => SetProperty(ref _etaText, value);
+    }
+
+    private int _batchCurrent;
+    public int BatchCurrent
+    {
+        get => _batchCurrent;
+        set => SetProperty(ref _batchCurrent, value);
+    }
+
+    private int _batchTotal;
+    public int BatchTotal
+    {
+        get => _batchTotal;
+        set
+        {
+            if (SetProperty(ref _batchTotal, value))
+                OnBatchTotalChanged(value);
+        }
+    }
     public bool IsBatch => BatchTotal > 1;
-    partial void OnBatchTotalChanged(int value) => OnPropertyChanged(nameof(IsBatch));
+    private void OnBatchTotalChanged(int value) => OnPropertyChanged(nameof(IsBatch));
 
     // ───────────────────────── Tools / updates ─────────────────────────
     public ToolStatusViewModel YtDlp { get; } = new("yt-dlp");
     public ToolStatusViewModel Ffmpeg { get; } = new("ffmpeg");
 
-    [ObservableProperty] private UpdateInfo? _updateInfo;
-    [ObservableProperty] private bool _updateAvailable;
+    private UpdateInfo? _updateInfo;
+    public UpdateInfo? UpdateInfo
+    {
+        get => _updateInfo;
+        set => SetProperty(ref _updateInfo, value);
+    }
+
+    private bool _updateAvailable;
+    public bool UpdateAvailable
+    {
+        get => _updateAvailable;
+        set => SetProperty(ref _updateAvailable, value);
+    }
 
     // ───────────────────────── Debug tab ─────────────────────────
-    [ObservableProperty] private string _debugUrl = "";
-    [ObservableProperty] private string _debugOutput = "";
-    [ObservableProperty] private string _rawArgs = "";
-    [ObservableProperty] private bool _debugVerbose;
-    [ObservableProperty] private bool _debugSkipDownload;
+    private string _debugUrl = "";
+    public string DebugUrl
+    {
+        get => _debugUrl;
+        set => SetProperty(ref _debugUrl, value);
+    }
+
+    private string _debugOutput = "";
+    public string DebugOutput
+    {
+        get => _debugOutput;
+        set => SetProperty(ref _debugOutput, value);
+    }
+
+    private string _rawArgs = "";
+    public string RawArgs
+    {
+        get => _rawArgs;
+        set => SetProperty(ref _rawArgs, value);
+    }
+
+    private bool _debugVerbose;
+    public bool DebugVerbose
+    {
+        get => _debugVerbose;
+        set => SetProperty(ref _debugVerbose, value);
+    }
+
+    private bool _debugSkipDownload;
+    public bool DebugSkipDownload
+    {
+        get => _debugSkipDownload;
+        set => SetProperty(ref _debugSkipDownload, value);
+    }
 
     // ───────────────────────── Logs tab ─────────────────────────
     public ObservableCollection<LogEntry> Logs { get; } = [];
     public ICollectionView LogsView { get; }
 
-    [ObservableProperty] private LogLevel _minLogLevel = LogLevel.Debug;
-    partial void OnMinLogLevelChanged(LogLevel value) => LogsView.Refresh();
+    private LogLevel _minLogLevel = LogLevel.Debug;
+    public LogLevel MinLogLevel
+    {
+        get => _minLogLevel;
+        set
+        {
+            if (SetProperty(ref _minLogLevel, value))
+                OnMinLogLevelChanged(value);
+        }
+    }
+    private void OnMinLogLevelChanged(LogLevel value) => LogsView.Refresh();
 
     // ═════════════════════════ Lifecycle ═════════════════════════
     public async Task InitializeAsync()
@@ -384,7 +662,6 @@ public sealed partial class MainViewModel : ObservableObject
     // ═════════════════════════ Analyze ═════════════════════════
     private bool CanAnalyze() => !IsBusy && !IsDownloading && !string.IsNullOrWhiteSpace(Url);
 
-    [RelayCommand(CanExecute = nameof(CanAnalyze))]
     private async Task AnalyzeAsync()
     {
         var url = Url.Trim();
@@ -456,7 +733,6 @@ public sealed partial class MainViewModel : ObservableObject
         DownloadCommand.NotifyCanExecuteChanged();
     }
 
-    [RelayCommand]
     private void UseRecent(RecentUrl? recent)
     {
         if (recent is not null)
@@ -464,10 +740,9 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     // ═════════════════════════ Selection ═════════════════════════
-    [RelayCommand] private void SelectAll() => SetAllSelected(true);
-    [RelayCommand] private void ClearSelection() => SetAllSelected(false);
+    private void SelectAll() => SetAllSelected(true);
+    private void ClearSelection() => SetAllSelected(false);
 
-    [RelayCommand]
     private void InvertSelection()
     {
         foreach (var i in PlaylistItems)
@@ -515,7 +790,6 @@ public sealed partial class MainViewModel : ObservableObject
            && (!IsPlaylist || SelectedCount > 0)
            && !string.IsNullOrWhiteSpace(Settings.Paths.LastOutputDirectory);
 
-    [RelayCommand(CanExecute = nameof(CanDownload))]
     private async Task DownloadAsync()
     {
         _downloadCts = new CancellationTokenSource();
@@ -581,7 +855,6 @@ public sealed partial class MainViewModel : ObservableObject
 
     private bool CanCancel() => IsDownloading;
 
-    [RelayCommand(CanExecute = nameof(CanCancel))]
     private void Cancel()
     {
         _downloadCts?.Cancel();
@@ -622,7 +895,6 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
     private async Task InstallYtDlpAsync()
     {
         YtDlp.IsWorking = true;
@@ -637,7 +909,6 @@ public sealed partial class MainViewModel : ObservableObject
         finally { YtDlp.IsWorking = false; ProgressValue = 0; await RefreshToolsAsync(); }
     }
 
-    [RelayCommand]
     private async Task InstallFfmpegAsync()
     {
         var kind = ChooseFfmpegKind is null ? FfmpegInstallKind.Full : await ChooseFfmpegKind();
@@ -656,7 +927,6 @@ public sealed partial class MainViewModel : ObservableObject
         finally { Ffmpeg.IsWorking = false; ProgressValue = 0; await RefreshToolsAsync(); }
     }
 
-    [RelayCommand]
     private async Task CheckUpdateAsync()
     {
         try
@@ -671,7 +941,6 @@ public sealed partial class MainViewModel : ObservableObject
         catch (Exception ex) { StatusText = $"Falha ao checar atualização: {ex.Message}"; }
     }
 
-    [RelayCommand]
     private async Task UpdateYtDlpAsync()
     {
         YtDlp.IsWorking = true;
@@ -687,7 +956,6 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     // ═════════════════════════ Pickers / open ═════════════════════════
-    [RelayCommand]
     private void BrowseOutputDirectory()
     {
         var chosen = PickFolder?.Invoke(Settings.Paths.LastOutputDirectory);
@@ -699,7 +967,6 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
     private void BrowseCookiesFile()
     {
         var chosen = PickCookiesFile?.Invoke();
@@ -707,19 +974,16 @@ public sealed partial class MainViewModel : ObservableObject
             Settings.Advanced.CookiesFilePath = chosen;
     }
 
-    [RelayCommand] private void ClearCookies() => Settings.Advanced.CookiesFilePath = null;
+    private void ClearCookies() => Settings.Advanced.CookiesFilePath = null;
 
-    [RelayCommand]
     private void OpenLogsFolder() => OpenFolderPath?.Invoke(_logger.LogDirectory);
 
-    [RelayCommand]
     private void OpenOutputFolder()
     {
         if (!string.IsNullOrEmpty(Settings.Paths.LastOutputDirectory))
             OpenFolderPath?.Invoke(Settings.Paths.LastOutputDirectory);
     }
 
-    [RelayCommand]
     private void OpenReleasePage()
     {
         if (UpdateInfo is { ReleaseUrl: { Length: > 0 } url })
@@ -727,25 +991,24 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     // ═════════════════════════ Debug commands ═════════════════════════
-    [RelayCommand] private Task Simulate() => RunDebugAsync(["--simulate", DebugUrl]);
-    [RelayCommand] private Task GetFilename() => RunDebugAsync(["--get-filename", "-o", Settings.Paths.LastTemplate, DebugUrl]);
-    [RelayCommand] private Task GetTitle() => RunDebugAsync(["--get-title", DebugUrl]);
-    [RelayCommand] private Task GetDuration() => RunDebugAsync(["--get-duration", DebugUrl]);
-    [RelayCommand] private Task GetThumbnail() => RunDebugAsync(["--get-thumbnail", DebugUrl]);
-    [RelayCommand] private Task GetDirectUrl() => RunDebugAsync(["--get-url", DebugUrl]);
-    [RelayCommand] private Task GetId() => RunDebugAsync(["--get-id", DebugUrl]);
-    [RelayCommand] private Task ListFormats() => RunDebugAsync(["-F", DebugUrl]);
-    [RelayCommand] private Task DumpJson() => RunDebugAsync(["--dump-json", DebugUrl]);
+    private Task Simulate() => RunDebugAsync(["--simulate", DebugUrl]);
+    private Task GetFilename() => RunDebugAsync(["--get-filename", "-o", Settings.Paths.LastTemplate, DebugUrl]);
+    private Task GetTitle() => RunDebugAsync(["--get-title", DebugUrl]);
+    private Task GetDuration() => RunDebugAsync(["--get-duration", DebugUrl]);
+    private Task GetThumbnail() => RunDebugAsync(["--get-thumbnail", DebugUrl]);
+    private Task GetDirectUrl() => RunDebugAsync(["--get-url", DebugUrl]);
+    private Task GetId() => RunDebugAsync(["--get-id", DebugUrl]);
+    private Task ListFormats() => RunDebugAsync(["-F", DebugUrl]);
+    private Task DumpJson() => RunDebugAsync(["--dump-json", DebugUrl]);
 
-    [RelayCommand]
     private Task RunRaw()
     {
         var parsed = SplitArguments(RawArgs);
         return parsed.Length == 0 ? Task.CompletedTask : RunDebugAsync(parsed, applyToggles: false);
     }
 
-    [RelayCommand] private void ClearOutput() => DebugOutput = "";
-    [RelayCommand] private void CopyOutput() => CopyToClipboard?.Invoke(DebugOutput);
+    private void ClearOutput() => DebugOutput = "";
+    private void CopyOutput() => CopyToClipboard?.Invoke(DebugOutput);
 
     private async Task RunDebugAsync(string[] baseArgs, bool applyToggles = true)
     {

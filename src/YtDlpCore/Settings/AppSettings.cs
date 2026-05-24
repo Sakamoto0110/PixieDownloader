@@ -1,13 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Text.Json.Serialization;
-using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace YtDlpCore;
 
 /// <summary>Root settings object persisted to <c>./settings.json</c>. All nodes are observable.</summary>
-public sealed partial class AppSettings : ObservableObject
+public sealed class AppSettings : ObservableObject
 {
-    [ObservableProperty] private int _version = 1;
+    private int _version = 1;
+    public int Version { get => _version; set => SetProperty(ref _version, value); }
 
     public UiSettings Ui { get; init; } = new();
     public PathSettings Paths { get; init; } = new();
@@ -17,56 +17,100 @@ public sealed partial class AppSettings : ObservableObject
     public ObservableCollection<RecentUrl> RecentUrls { get; init; } = [];
 }
 
-public sealed partial class UiSettings : ObservableObject
+public sealed class UiSettings : ObservableObject
 {
     public WindowSize LastWindowSize { get; init; } = new();
-    [ObservableProperty] private string _lastWindowState = "Normal";   // Normal | Maximized
-    [ObservableProperty] private bool _advancedPanelExpanded;
-    [ObservableProperty] private bool _debugPanelEnabled;
-    [ObservableProperty] private bool _treatAsPlaylist = true;   // analyse list URLs as playlists by default
-    [ObservableProperty] private bool _previewCollapsed;         // collapsed state of the preview sidebar
+
+    private string _lastWindowState = "Normal";   // Normal | Maximized
+    public string LastWindowState { get => _lastWindowState; set => SetProperty(ref _lastWindowState, value); }
+
+    private bool _advancedPanelExpanded;
+    public bool AdvancedPanelExpanded { get => _advancedPanelExpanded; set => SetProperty(ref _advancedPanelExpanded, value); }
+
+    private bool _debugPanelEnabled;
+    public bool DebugPanelEnabled { get => _debugPanelEnabled; set => SetProperty(ref _debugPanelEnabled, value); }
+
+    private bool _treatAsPlaylist = true;   // analyse list URLs as playlists by default
+    public bool TreatAsPlaylist { get => _treatAsPlaylist; set => SetProperty(ref _treatAsPlaylist, value); }
+
+    private bool _previewCollapsed;          // collapsed state of the preview sidebar
+    public bool PreviewCollapsed { get => _previewCollapsed; set => SetProperty(ref _previewCollapsed, value); }
 }
 
-public sealed partial class WindowSize : ObservableObject
+public sealed class WindowSize : ObservableObject
 {
-    [ObservableProperty][JsonPropertyName("w")] private double _w = 1280;
-    [ObservableProperty][JsonPropertyName("h")] private double _h = 800;
+    private double _w = 1280;
+    [JsonPropertyName("w")]
+    public double W { get => _w; set => SetProperty(ref _w, value); }
+
+    private double _h = 800;
+    [JsonPropertyName("h")]
+    public double H { get => _h; set => SetProperty(ref _h, value); }
 }
 
-public sealed partial class PathSettings : ObservableObject
+public sealed class PathSettings : ObservableObject
 {
-    [ObservableProperty] private string? _lastOutputDirectory =
+    private string? _lastOutputDirectory =
         Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
-    [ObservableProperty] private string _lastTemplate = "%(playlist_title)s/%(playlist_index)02d - %(title)s.%(ext)s";
+    public string? LastOutputDirectory { get => _lastOutputDirectory; set => SetProperty(ref _lastOutputDirectory, value); }
+
+    private string _lastTemplate = "%(playlist_title)s/%(playlist_index)02d - %(title)s.%(ext)s";
+    public string LastTemplate { get => _lastTemplate; set => SetProperty(ref _lastTemplate, value); }
 }
 
-public sealed partial class AudioSettings : ObservableObject
+public sealed class AudioSettings : ObservableObject
 {
-    [ObservableProperty] private string _bitrate = "192k";   // 128k | 192k | 320k
-    [ObservableProperty] private bool _embedThumbnail = true;
-    [ObservableProperty] private bool _embedMetadata = true;
+    private string _bitrate = "192k";   // 128k | 192k | 320k
+    public string Bitrate { get => _bitrate; set => SetProperty(ref _bitrate, value); }
+
+    private bool _embedThumbnail = true;
+    public bool EmbedThumbnail { get => _embedThumbnail; set => SetProperty(ref _embedThumbnail, value); }
+
+    private bool _embedMetadata = true;
+    public bool EmbedMetadata { get => _embedMetadata; set => SetProperty(ref _embedMetadata, value); }
 }
 
-public sealed partial class AdvancedSettings : ObservableObject
+public sealed class AdvancedSettings : ObservableObject
 {
-    [ObservableProperty] private int _parallelDownloads = 3;   // 1..10
-    [ObservableProperty] private int _retries = 10;
-    [ObservableProperty] private int _timeoutSeconds = 60;
-    [ObservableProperty] private int? _maxDurationMinutes;     // null = no limit
-    [ObservableProperty] private string? _cookiesFilePath;
+    private int _parallelDownloads = 3;   // 1..10
+    public int ParallelDownloads { get => _parallelDownloads; set => SetProperty(ref _parallelDownloads, value); }
+
+    private int _retries = 10;
+    public int Retries { get => _retries; set => SetProperty(ref _retries, value); }
+
+    private int _timeoutSeconds = 60;
+    public int TimeoutSeconds { get => _timeoutSeconds; set => SetProperty(ref _timeoutSeconds, value); }
+
+    private int? _maxDurationMinutes;     // null = no limit
+    public int? MaxDurationMinutes { get => _maxDurationMinutes; set => SetProperty(ref _maxDurationMinutes, value); }
+
+    private string? _cookiesFilePath;
+    public string? CookiesFilePath { get => _cookiesFilePath; set => SetProperty(ref _cookiesFilePath, value); }
 }
 
-public sealed partial class ToolSettings : ObservableObject
+public sealed class ToolSettings : ObservableObject
 {
-    [ObservableProperty] private string _ytDlpPath = "./tools/yt-dlp.exe";
-    [ObservableProperty] private string _ffmpegPath = "./tools/ffmpeg.exe";
-    [ObservableProperty] private DateTimeOffset? _lastUpdateCheck;
-    [ObservableProperty] private bool _autoCheckUpdatesOnStartup = true;
+    private string _ytDlpPath = "./tools/yt-dlp.exe";
+    public string YtDlpPath { get => _ytDlpPath; set => SetProperty(ref _ytDlpPath, value); }
+
+    private string _ffmpegPath = "./tools/ffmpeg.exe";
+    public string FfmpegPath { get => _ffmpegPath; set => SetProperty(ref _ffmpegPath, value); }
+
+    private DateTimeOffset? _lastUpdateCheck;
+    public DateTimeOffset? LastUpdateCheck { get => _lastUpdateCheck; set => SetProperty(ref _lastUpdateCheck, value); }
+
+    private bool _autoCheckUpdatesOnStartup = true;
+    public bool AutoCheckUpdatesOnStartup { get => _autoCheckUpdatesOnStartup; set => SetProperty(ref _autoCheckUpdatesOnStartup, value); }
 }
 
-public sealed partial class RecentUrl : ObservableObject
+public sealed class RecentUrl : ObservableObject
 {
-    [ObservableProperty] private string _url = "";
-    [ObservableProperty] private string? _title;
-    [ObservableProperty] private DateTimeOffset _lastUsed = DateTimeOffset.Now;
+    private string _url = "";
+    public string Url { get => _url; set => SetProperty(ref _url, value); }
+
+    private string? _title;
+    public string? Title { get => _title; set => SetProperty(ref _title, value); }
+
+    private DateTimeOffset _lastUsed = DateTimeOffset.Now;
+    public DateTimeOffset LastUsed { get => _lastUsed; set => SetProperty(ref _lastUsed, value); }
 }
