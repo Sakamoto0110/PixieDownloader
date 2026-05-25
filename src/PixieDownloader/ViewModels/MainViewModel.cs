@@ -290,6 +290,27 @@ public sealed class MainViewModel : ObservableObject
             AnalyzeCommand.Execute(null);
     }
 
+    /// <summary>
+    /// When true, downloads the actual video (MP4) and reveals the video options section; when false
+    /// the app extracts MP3 (its original behavior). Proxies the persisted <c>Settings.Video.DownloadVideo</c>.
+    /// </summary>
+    public bool DownloadVideo
+    {
+        get => Settings.Video.DownloadVideo;
+        set
+        {
+            if (Settings.Video.DownloadVideo == value)
+                return;
+            Settings.Video.DownloadVideo = value;   // persisted (debounced) by SettingsService
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DownloadButtonLabel));
+            UpdateTemplatePreview();                 // output extension flips between .mp3 and .mp4
+        }
+    }
+
+    /// <summary>Label for the single-video download button — reflects the current mode.</summary>
+    public string DownloadButtonLabel => DownloadVideo ? "Baixar vídeo" : "Baixar como MP3";
+
     /// <summary>Auto-analyzes a freshly pasted/typed URL after a short debounce (no button click needed).</summary>
     private void ScheduleAutoAnalyze(string? value)
     {
@@ -800,6 +821,7 @@ public sealed class MainViewModel : ObservableObject
         EtaText = null;
 
         var audio = new AudioOptions(Settings.Audio.Bitrate, Settings.Audio.EmbedThumbnail, Settings.Audio.EmbedMetadata);
+        var video = new VideoOptions(Settings.Video.DownloadVideo, Settings.Video.IncludeAudio, Settings.Video.ExtractAudioSeparate, Settings.Video.Speed);
         var advanced = new AdvancedOptions(
             Settings.Advanced.Retries,
             Settings.Advanced.TimeoutSeconds,
@@ -818,7 +840,7 @@ public sealed class MainViewModel : ObservableObject
                 BatchTotal = selected.Count;
                 BatchCurrent = 0;
                 var indices = string.Join(",", selected.Select(i => i.Index));
-                var req = new DownloadRequest(_currentPlaylistUrl!, outDir, template, audio, advanced) { PlaylistItems = indices };
+                var req = new DownloadRequest(_currentPlaylistUrl!, outDir, template, audio, advanced) { PlaylistItems = indices, Video = video };
                 StatusText = $"Baixando {selected.Count} itens...";
                 await _service.DownloadAsync(req, progress, _downloadCts.Token);
             }
@@ -826,7 +848,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 BatchTotal = 1;
                 BatchCurrent = 1;
-                var req = new DownloadRequest(v.WebpageUrl, outDir, template, audio, advanced);
+                var req = new DownloadRequest(v.WebpageUrl, outDir, template, audio, advanced) { Video = video };
                 StatusText = "Baixando...";
                 var result = await _service.DownloadAsync(req, progress, _downloadCts.Token);
                 StatusText = result.Success ? "Concluído" : $"Falha: {result.ErrorMessage}";
@@ -1106,7 +1128,7 @@ public sealed class MainViewModel : ObservableObject
             ["playlist_title"] = PlaylistTitle ?? "Playlist",
             ["playlist_index"] = "1",
             ["upload_date"] = "20260523",
-            ["ext"] = "mp3",
+            ["ext"] = DownloadVideo ? "mp4" : "mp3",
         };
         var rendered = RenderTemplate(Settings.Paths.LastTemplate, values);
         var dir = Settings.Paths.LastOutputDirectory ?? "";

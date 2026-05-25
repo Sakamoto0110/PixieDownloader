@@ -12,6 +12,7 @@ public sealed class AppSettings : ObservableObject
     public UiSettings Ui { get; init; } = new();
     public PathSettings Paths { get; init; } = new();
     public AudioSettings Audio { get; init; } = new();
+    public VideoSettings Video { get; init; } = new();
     public AdvancedSettings Advanced { get; init; } = new();
     public ToolSettings Tools { get; init; } = new();
     public ObservableCollection<RecentUrl> RecentUrls { get; init; } = [];
@@ -68,6 +69,21 @@ public sealed class AudioSettings : ObservableObject
 
     private bool _embedMetadata = true;
     public bool EmbedMetadata { get => _embedMetadata; set => SetProperty(ref _embedMetadata, value); }
+}
+
+public sealed class VideoSettings : ObservableObject
+{
+    private bool _downloadVideo;            // false = extrai MP3 (padrão); true = baixa o vídeo
+    public bool DownloadVideo { get => _downloadVideo; set => SetProperty(ref _downloadVideo, value); }
+
+    private bool _includeAudio = true;      // true = o MP4 tem áudio; false = MP4 mudo
+    public bool IncludeAudio { get => _includeAudio; set => SetProperty(ref _includeAudio, value); }
+
+    private bool _extractAudioSeparate;     // true = também gera um MP3 só de áudio
+    public bool ExtractAudioSeparate { get => _extractAudioSeparate; set => SetProperty(ref _extractAudioSeparate, value); }
+
+    private double _speed = 1.0;            // 0.1x .. 8x; aplicado ao vídeo via ffmpeg (setpts + atempo)
+    public double Speed { get => _speed; set => SetProperty(ref _speed, value); }
 }
 
 public sealed class AdvancedSettings : ObservableObject

@@ -103,8 +103,33 @@
                                             </TextBox.InputBindings>
                                         </TextBox>
                                     </DockPanel>
-                                    <CheckBox Content="Tratar como playlist (quando a URL tiver uma lista)" Margin="0,10,0,0"
-                                              IsChecked="{Binding TreatAsPlaylist, Mode=TwoWay}"/>
+                                    <DockPanel Margin="0,10,0,0">
+                                        <CheckBox DockPanel.Dock="Right" Content="Baixar vídeo" Margin="12,0,0,0"
+                                                  IsChecked="{Binding DownloadVideo, Mode=TwoWay}"
+                                                  ToolTip="Baixa o arquivo de vídeo (MP4) em vez de extrair só o áudio"/>
+                                        <CheckBox Content="Tratar como playlist (quando a URL tiver uma lista)"
+                                                  IsChecked="{Binding TreatAsPlaylist, Mode=TwoWay}"/>
+                                    </DockPanel>
+
+                                    <!-- Video options — revealed when "Baixar vídeo" is checked -->
+                                    <StackPanel Visibility="{Binding DownloadVideo, Converter={StaticResource BoolToVis}}">
+                                        <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,1,0,0" Margin="0,12,0,0"/>
+                                        <CheckBox Content="Extrair com áudio" Margin="0,12,0,0"
+                                                  IsChecked="{Binding Settings.Video.IncludeAudio, Mode=TwoWay}"
+                                                  ToolTip="Desmarcada: o MP4 vem sem áudio (mudo)"/>
+                                        <CheckBox Content="Extrair áudio separado em .mp3" Margin="0,8,0,0"
+                                                  IsChecked="{Binding Settings.Video.ExtractAudioSeparate, Mode=TwoWay}"
+                                                  ToolTip="Gera também um arquivo .mp3 só com o áudio, ao lado do vídeo"/>
+                                        <DockPanel Margin="0,14,0,0">
+                                            <TextBlock DockPanel.Dock="Right" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                                       Text="{Binding Settings.Video.Speed, StringFormat={}{0:0.##}x}"/>
+                                            <TextBlock Text="Velocidade do vídeo" Style="{StaticResource Label}"/>
+                                        </DockPanel>
+                                        <Slider Minimum="0.1" Maximum="8" IsSnapToTickEnabled="True" TickFrequency="0.05"
+                                                Value="{Binding Settings.Video.Speed, Mode=TwoWay}"/>
+                                        <TextBlock Text="Abaixo de 1x = câmera lenta; acima = acelerado. Re-encoda o vídeo (pode demorar)."
+                                                   Style="{StaticResource Hint}" Margin="0,4,0,0"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 

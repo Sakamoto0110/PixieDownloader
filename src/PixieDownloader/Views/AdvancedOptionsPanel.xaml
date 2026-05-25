@@ -188,7 +188,7 @@
                 <Button DockPanel.Dock="Right" Content="Baixar selecionados" MinWidth="180" Padding="16,9"
                         Command="{Binding DownloadCommand}"
                         Visibility="{Binding IsPlaylist, Converter={StaticResource BoolToVis}}"/>
-                <Button DockPanel.Dock="Right" Content="Baixar como MP3" MinWidth="180" Padding="16,9"
+                <Button DockPanel.Dock="Right" Content="{Binding DownloadButtonLabel}" MinWidth="180" Padding="16,9"
                         Command="{Binding DownloadCommand}"
                         Visibility="{Binding IsPlaylist, Converter={StaticResource InverseBoolToVis}}"/>
 

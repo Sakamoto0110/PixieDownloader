@@ -13,6 +13,9 @@ public record DownloadRequest(
     /// When null, a single-video download is forced (<c>--no-playlist</c>).
     /// </summary>
     public string? PlaylistItems { get; init; }
+
+    /// <summary>Video vs. audio-only mode and speed. Defaults to audio-only (MP3) when omitted.</summary>
+    public VideoOptions Video { get; init; } = new();
 }
 
 /// <summary>Batch download of several URLs sharing the same options.</summary>
@@ -28,6 +31,19 @@ public record AudioOptions(
     string Bitrate = "192k",          // 128k | 192k | 320k
     bool EmbedThumbnail = true,
     bool EmbedMetadata = true);
+
+/// <summary>
+/// Video-download options. When <see cref="DownloadVideo"/> is false the request is a plain
+/// audio (MP3) extraction. When true, the best video is downloaded to MP4:
+/// <see cref="IncludeAudio"/> controls whether the MP4 keeps its audio track,
+/// <see cref="ExtractAudioSeparate"/> additionally produces a standalone MP3, and
+/// <see cref="Speed"/> (1.0 = normal) re-encodes the video faster/slower.
+/// </summary>
+public record VideoOptions(
+    bool DownloadVideo = false,
+    bool IncludeAudio = true,
+    bool ExtractAudioSeparate = false,
+    double Speed = 1.0);
 
 public record AdvancedOptions(
     int Retries = 10,

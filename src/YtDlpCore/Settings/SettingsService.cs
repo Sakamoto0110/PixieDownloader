@@ -141,6 +141,7 @@ public sealed class SettingsService : IDisposable
         Sub(Current.Ui.LastWindowSize);
         Sub(Current.Paths);
         Sub(Current.Audio);
+        Sub(Current.Video);
         Sub(Current.Advanced);
         Sub(Current.Tools);
         Current.RecentUrls.CollectionChanged += (_, _) => ScheduleSave();

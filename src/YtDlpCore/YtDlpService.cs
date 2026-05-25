@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 
 namespace YtDlpCore;
@@ -88,8 +89,14 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         Directory.CreateDirectory(request.OutputDirectory);
         PrepareStagingDir();
 
+        // When the video needs an ffmpeg pass, download into a private work folder first (see below).
+        var needPass = VideoNeedsFfmpegPass(request.Video);
+        string? workDir = needPass ? Path.Combine(GetStagingDir(), "proc-" + Guid.NewGuid().ToString("N")) : null;
+        if (workDir is not null)
+            Directory.CreateDirectory(workDir);
+
         var sw = Stopwatch.StartNew();
-        var args = BuildDownloadArgs(request);
+        var args = BuildDownloadArgs(request, workDir);
         Emit(LogLevel.Info, "Core", $"Download iniciado: {request.Url}", request.Url);
 
         var currentTitle = request.Url;
@@ -97,6 +104,7 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         double lastPercent = 0;
         string? destPath = null;
         string? lastError = null;
+        var primaryExt = request.Video.DownloadVideo ? ".mp4" : ".mp3";   // which Destination line is the final file
 
         void OnStdout(string line)
         {
@@ -105,7 +113,7 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
                 stage = st.Value;
 
             var dest = YtDlpOutputParser.TryParseDestination(line);
-            if (dest is not null && (destPath is null || dest.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)))
+            if (dest is not null && (destPath is null || dest.EndsWith(primaryExt, StringComparison.OrdinalIgnoreCase)))
                 destPath = dest;
 
             var p = YtDlpOutputParser.TryParseProgress(line);
@@ -137,6 +145,10 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
             if (code == 0)
             {
+                // ffmpeg pass + deliver: locate the real files in the work folder, process, move to output.
+                if (workDir is not null)
+                    destPath = await PostProcessAndDeliverAsync(workDir, request, progress, currentTitle, ct).ConfigureAwait(false) ?? destPath;
+
                 progress?.Report(new DownloadProgress(currentTitle, 100, null, null, DownloadStage.Done));
                 Emit(LogLevel.Info, "Core", $"Concluído: {destPath ?? request.Url}", request.Url);
                 return new DownloadResult(request.Url, true, destPath, null, sw.Elapsed);
@@ -160,6 +172,84 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
             Emit(LogLevel.Error, "Core", ex.Message, request.Url, ex);
             return new DownloadResult(request.Url, false, destPath, ex.Message, sw.Elapsed);
         }
+        finally
+        {
+            if (workDir is not null)
+            {
+                try { if (Directory.Exists(workDir)) Directory.Delete(workDir, recursive: true); }
+                catch { /* best-effort cleanup of the work folder */ }
+            }
+        }
+    }
+
+    private static readonly string[] VideoExtensions = [".mp4", ".mkv", ".webm", ".mov"];
+    private static readonly string[] DeliverExtensions = [".mp4", ".mp3"];
+
+    /// <summary>
+    /// Runs after a successful download into <paramref name="workDir"/>. Locates the produced video file(s)
+    /// on disk (robust against Unicode in titles — no log-path parsing), optionally extracts a separate MP3
+    /// at normal speed, applies the speed change / audio strip via ffmpeg (always producing mp4), then moves
+    /// the final mp4/mp3 to the real output dir preserving the template's subfolders. Returns the main mp4.
+    /// </summary>
+    private async Task<string?> PostProcessAndDeliverAsync(string workDir, DownloadRequest request, IProgress<DownloadProgress>? progress, string title, CancellationToken ct)
+    {
+        var ffmpeg = _binaries.ResolveFfmpegPath();
+        var v = request.Video;
+        var bitrate = request.Audio.Bitrate.ToUpperInvariant().Trim();
+        progress?.Report(new DownloadProgress(title, 0, null, null, DownloadStage.Converting));
+        void OnLine(string l) => Emit(LogLevel.Debug, "ffmpeg", l, request.Url);
+
+        var videos = Directory.EnumerateFiles(workDir, "*", SearchOption.AllDirectories)
+            .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            .ToList();
+
+        if (ffmpeg is null)
+            Emit(LogLevel.Warning, "Core", "ffmpeg não encontrado — entregando o vídeo sem processar.", request.Url);
+        else foreach (var src in videos)
+        {
+            // (a) Separate MP3 from the original (normal-speed) audio, before we re-encode the video.
+            if (v.ExtractAudioSeparate)
+            {
+                var mp3 = Path.ChangeExtension(src, ".mp3");
+                string[] mp3Args = ["-hide_banner", "-loglevel", "error", "-y", "-i", src, "-vn", "-c:a", "libmp3lame", "-b:a", bitrate, mp3];
+                Emit(LogLevel.Info, "Core", "Extraindo áudio separado (mp3)...", request.Url);
+                await _runner.RunAsync(ffmpeg, mp3Args, OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+            }
+
+            // (b) Speed change / audio strip — always outputs mp4 (also normalizes webm/mkv -> mp4).
+            var outMp4 = Path.Combine(Path.GetDirectoryName(src)!, Path.GetFileNameWithoutExtension(src) + ".pixie.mp4");
+            var passArgs = BuildSpeedPassArgs(src, outMp4, v.Speed, v.IncludeAudio, bitrate);
+            Emit(LogLevel.Info, "Core", $"Processando vídeo (velocidade {Math.Clamp(v.Speed, 0.1, 8.0):0.##}x)...", request.Url);
+            var code = await _runner.RunAsync(ffmpeg, passArgs, OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+
+            if (code == 0 && File.Exists(outMp4))
+            {
+                try { File.Delete(src); } catch { /* ignore */ }
+                var finalMp4 = Path.ChangeExtension(src, ".mp4");
+                try { if (File.Exists(finalMp4)) File.Delete(finalMp4); } catch { /* ignore */ }
+                File.Move(outMp4, finalMp4);
+                Emit(LogLevel.Info, "Core", "Velocidade aplicada.", request.Url);
+            }
+            else
+            {
+                try { if (File.Exists(outMp4)) File.Delete(outMp4); } catch { /* ignore */ }
+                Emit(LogLevel.Warning, "Core", $"ffmpeg falhou (código {code}); entregando o vídeo sem processar.", request.Url);
+            }
+        }
+
+        // Move the final outputs to the real output dir, preserving the template's relative subfolders.
+        string? mainPath = null;
+        foreach (var file in Directory.EnumerateFiles(workDir, "*", SearchOption.AllDirectories)
+                     .Where(f => DeliverExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())))
+        {
+            var dest = Path.Combine(request.OutputDirectory, Path.GetRelativePath(workDir, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            try { if (File.Exists(dest)) File.Delete(dest); } catch { /* ignore */ }
+            File.Move(file, dest);
+            if (mainPath is null && dest.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+                mainPath = dest;
+        }
+        return mainPath;
     }
 
     public async Task<IReadOnlyList<DownloadResult>> DownloadBatchAsync(BatchDownloadRequest request, IProgress<BatchProgress>? progress, CancellationToken ct)
@@ -241,24 +331,56 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         }
     }
 
-    private List<string> BuildDownloadArgs(DownloadRequest r)
+    private List<string> BuildDownloadArgs(DownloadRequest r, string? workDir = null)
     {
         var bitrate = r.Audio.Bitrate.ToUpperInvariant().Trim(); // "192k" -> "192K"
+        var args = new List<string>();
+        // When a post-download ffmpeg pass is needed, everything lands in our private work folder
+        // (home == temp), so we can locate the real files on disk and deliver them ourselves.
+        var homeDir = workDir ?? r.OutputDirectory;
+        var tempDir = workDir ?? GetStagingDir();
 
-        var args = new List<string>
+        if (r.Video.DownloadVideo)
         {
-            "-x",
-            "--audio-format", "mp3",
-            "--audio-quality", bitrate,
-            "-f", "bestaudio/best",
+            // We must download an audio stream if the video keeps it OR if we extract a separate MP3.
+            var downloadAudio = r.Video.IncludeAudio || r.Video.ExtractAudioSeparate;
+
+            // Prefer mp4-native (H.264/AAC) streams so the output plays everywhere without a re-encode.
+            args.Add("-f"); args.Add(downloadAudio
+                ? "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
+                : "bv[ext=mp4]/bv/b");
+            args.Add("--merge-output-format"); args.Add("mp4");
+
+            // Speed changes and the "silent video + separate MP3" combo are applied by our own ffmpeg
+            // pass after the download — yt-dlp's recode silently no-ops on an already-mp4 file, so its
+            // filters never run. yt-dlp only extracts the separate MP3 itself when no post-pass is needed.
+            if (!VideoNeedsFfmpegPass(r.Video) && r.Video.ExtractAudioSeparate)
+            {
+                args.Add("-x");
+                args.Add("--audio-format"); args.Add("mp3");
+                args.Add("--audio-quality"); args.Add(bitrate);
+                args.Add("-k");   // keep the video file too
+            }
+        }
+        else
+        {
+            // Audio-only: extract to MP3 (the app's original behavior).
+            args.Add("-x");
+            args.Add("--audio-format"); args.Add("mp3");
+            args.Add("--audio-quality"); args.Add(bitrate);
+            args.Add("-f"); args.Add("bestaudio/best");
+        }
+
+        args.AddRange(
+        [
             "-o", r.OutputTemplate,                         // relative template (may include subfolders)
-            "-P", $"home:{r.OutputDirectory}",              // final files land here...
-            "-P", $"temp:{GetStagingDir()}",                // ...intermediate junk stays hidden, next to the .exe
+            "-P", $"home:{homeDir}",                        // final files land here...
+            "-P", $"temp:{tempDir}",                        // ...intermediate junk stays hidden, next to the .exe
             "--newline",            // emit progress on its own lines (cleaner parsing)
             "--no-mtime",
             "--retries", r.Advanced.Retries.ToString(),
             "--socket-timeout", r.Advanced.TimeoutSeconds.ToString(),
-        };
+        ]);
 
         if (string.IsNullOrWhiteSpace(r.PlaylistItems))
         {
@@ -299,6 +421,57 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
         args.Add(r.Url);
         return args;
+    }
+
+    /// <summary>True when the video download needs a post-download ffmpeg pass (speed change, or the
+    /// "silent video + separate MP3" combo where the audio must be stripped from the kept video).</summary>
+    internal static bool VideoNeedsFfmpegPass(VideoOptions v)
+        => v.DownloadVideo && (SpeedChanged(v.Speed) || (v.ExtractAudioSeparate && !v.IncludeAudio));
+
+    private static bool SpeedChanged(double speed) => Math.Abs(Math.Clamp(speed, 0.1, 8.0) - 1.0) > 0.001;
+
+    /// <summary>
+    /// Builds our own ffmpeg command (run after yt-dlp finishes) that rewrites the downloaded video.
+    /// We don't rely on yt-dlp's recode — it no-ops when the file is already mp4, so its filters never run.
+    /// We map only the first video/audio stream (ignoring any cover-art stream); a speed change uses
+    /// <c>setpts</c> (video PTS multiplier = 1/speed) and <c>atempo</c> (audio tempo, chained for factors
+    /// outside [0.5, 100], e.g. 0.1x = 0.5×0.5×0.4). When the video shouldn't keep audio we drop it with
+    /// <c>-an</c>; with no speed change the video stream is copied losslessly.
+    /// </summary>
+    internal static string[] BuildSpeedPassArgs(string input, string output, double speed, bool includeAudio, string audioBitrate)
+    {
+        var speedChange = SpeedChanged(speed);
+        var a = new List<string> { "-hide_banner", "-loglevel", "error", "-y", "-i", input, "-map_metadata", "0", "-map", "0:v:0" };
+
+        if (includeAudio) { a.Add("-map"); a.Add("0:a:0?"); }
+        else a.Add("-an");
+
+        if (speedChange)
+        {
+            var pts = (1.0 / Math.Clamp(speed, 0.1, 8.0)).ToString("0.######", CultureInfo.InvariantCulture);
+            a.Add("-filter:v"); a.Add($"setpts={pts}*PTS");
+            a.Add("-c:v"); a.Add("libx264"); a.Add("-preset"); a.Add("veryfast"); a.Add("-crf"); a.Add("20");
+        }
+        else { a.Add("-c:v"); a.Add("copy"); }
+
+        if (includeAudio)
+        {
+            if (speedChange) { a.Add("-filter:a"); a.Add(AtempoChain(Math.Clamp(speed, 0.1, 8.0))); a.Add("-c:a"); a.Add("aac"); a.Add("-b:a"); a.Add(audioBitrate); }
+            else { a.Add("-c:a"); a.Add("copy"); }
+        }
+
+        a.Add(output);
+        return [.. a];
+    }
+
+    private static string AtempoChain(double speed)
+    {
+        var factors = new List<double>();
+        var remaining = speed;
+        while (remaining < 0.5) { factors.Add(0.5); remaining /= 0.5; }   // slowdowns below 0.5x
+        while (remaining > 100.0) { factors.Add(100.0); remaining /= 100.0; }  // (unreachable here)
+        factors.Add(remaining);
+        return string.Join(",", factors.Select(f => "atempo=" + f.ToString("0.######", CultureInfo.InvariantCulture)));
     }
 
     // ───────────────────────── JSON parsing ─────────────────────────
