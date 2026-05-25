@@ -275,7 +275,7 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
                         progress?.Report(new BatchProgress(completed + 1, total, dp, success, failure));
                 });
 
-                var req = new DownloadRequest(url, request.OutputDirectory, request.OutputTemplate, request.Audio, request.Advanced);
+                var req = new DownloadRequest(url, request.OutputDirectory, request.OutputTemplate, request.Audio, request.Advanced) { Video = request.Video };
                 var res = await DownloadAsync(req, itemProgress, ct).ConfigureAwait(false);
                 results[index] = res;
 

@@ -79,6 +79,16 @@ public partial class MainWindow : Window
             return dlg.ShowDialog(this) == true ? dlg.FileName : null;
         };
 
+        _vm.PickQueueFile = () =>
+        {
+            var dlg = new OpenFileDialog
+            {
+                Title = "Importar lista de URLs (.txt)",
+                Filter = "Lista de URLs (*.txt)|*.txt|Todos os arquivos|*.*"
+            };
+            return dlg.ShowDialog(this) == true ? dlg.FileName : null;
+        };
+
         _vm.ChooseFfmpegKind = () =>
         {
             var dlg = new FfmpegInstallDialog { Owner = this };

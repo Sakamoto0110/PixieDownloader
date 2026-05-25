@@ -24,6 +24,8 @@ public sealed class MainViewModel : ObservableObject
     private CancellationTokenSource? _autoAnalyzeCts;
     private string? _currentPlaylistUrl;
     private string? _lastAnalyzedUrl;
+    private bool _isImportedList;        // true when the list came from an imported .txt (download = batch of distinct URLs)
+    private string? _importFolder;       // output subfolder name for the imported list
 
     public MainViewModel(IYtDlpService service, SettingsService settings, SessionLogger logger)
     {
@@ -45,6 +47,7 @@ public sealed class MainViewModel : ObservableObject
         ClearSelectionCommand = new RelayCommand(ClearSelection);
         InvertSelectionCommand = new RelayCommand(InvertSelection);
         DownloadCommand = new AsyncRelayCommand(DownloadAsync, CanDownload);
+        ImportQueueCommand = new AsyncRelayCommand(ImportQueueAsync, CanImportQueue);
         CancelCommand = new RelayCommand(Cancel, CanCancel);
         InstallYtDlpCommand = new AsyncRelayCommand(InstallYtDlpAsync);
         InstallFfmpegCommand = new AsyncRelayCommand(InstallFfmpegAsync);
@@ -109,6 +112,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ClearSelectionCommand { get; }
     public RelayCommand InvertSelectionCommand { get; }
     public AsyncRelayCommand DownloadCommand { get; }
+    public AsyncRelayCommand ImportQueueCommand { get; }
     public RelayCommand CancelCommand { get; }
     public AsyncRelayCommand InstallYtDlpCommand { get; }
     public AsyncRelayCommand InstallFfmpegCommand { get; }
@@ -136,6 +140,7 @@ public sealed class MainViewModel : ObservableObject
     // ───────────────────────── View interaction hooks (set by MainWindow) ─────────────────────────
     public Func<string?, string?>? PickFolder { get; set; }
     public Func<string?>? PickCookiesFile { get; set; }
+    public Func<string?>? PickQueueFile { get; set; }
     public Func<Task<FfmpegInstallKind?>>? ChooseFfmpegKind { get; set; }
     public Action<string>? CopyToClipboard { get; set; }
     public Action<string>? OpenFolderPath { get; set; }
@@ -409,7 +414,13 @@ public sealed class MainViewModel : ObservableObject
                 OnFilterTextChanged(value);
         }
     }
-    private void OnFilterTextChanged(string value) => PlaylistView.Refresh();
+    private void OnFilterTextChanged(string value)
+    {
+        // "%[a:b]" in the search box is a selection command, not a text filter.
+        if (TryParseRangeCommand(value, out var start, out var end))
+            ApplyRangeSelection(start, end);
+        PlaylistView.Refresh();
+    }
 
     private PlaylistItemViewModel? _selectedPlaylistItem;
     public PlaylistItemViewModel? SelectedPlaylistItem
@@ -721,6 +732,8 @@ public sealed class MainViewModel : ObservableObject
         PlaylistTitle = null;
         PlaylistUploader = null;
         _currentPlaylistUrl = null;
+        _isImportedList = false;     // a fresh analysis replaces any imported list
+        _importFolder = null;
 
         switch (info)
         {
@@ -794,11 +807,50 @@ public sealed class MainViewModel : ObservableObject
 
     private bool FilterPlaylistItem(object obj)
     {
-        if (obj is not PlaylistItemViewModel vm || string.IsNullOrWhiteSpace(FilterText))
+        // A range command ("%[a:b]") drives selection, not visibility — keep every row showing.
+        if (obj is not PlaylistItemViewModel vm || string.IsNullOrWhiteSpace(FilterText) || IsRangeCommand(FilterText))
             return true;
         var f = FilterText.Trim();
         return vm.Title.Contains(f, StringComparison.OrdinalIgnoreCase)
                || (vm.Uploader?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    // ── Range selection command: "%[a:b]" selects items a..b (1-based, inclusive) and deselects the
+    //    rest. Open ends ("%[5:]", "%[:10]") and a single item ("%[7]") are supported. ──
+    private static readonly Regex RangeCommandRegex =
+        new(@"^\s*%\[\s*(?<a>\d+)?\s*(?<colon>:)?\s*(?<b>\d+)?\s*\]\s*$", RegexOptions.Compiled);
+
+    private static bool IsRangeCommand(string? text) => RangeCommandRegex.IsMatch(text ?? "");
+
+    private static bool TryParseRangeCommand(string? text, out int start, out int end)
+    {
+        start = 0; end = 0;
+        var m = RangeCommandRegex.Match(text ?? "");
+        if (!m.Success)
+            return false;
+
+        bool hasA = m.Groups["a"].Success, hasColon = m.Groups["colon"].Success, hasB = m.Groups["b"].Success;
+        if (hasColon)
+        {
+            start = hasA && int.TryParse(m.Groups["a"].Value, out var a) ? a : 1;
+            end = hasB && int.TryParse(m.Groups["b"].Value, out var b) ? b : int.MaxValue;
+        }
+        else
+        {
+            if (!hasA || !int.TryParse(m.Groups["a"].Value, out var only))
+                return false;              // "%[]" — nothing to select
+            start = end = only;            // "%[7]" — a single item
+        }
+
+        if (start < 1) start = 1;
+        if (end < start) (start, end) = (end, start);   // tolerate "%[20:5]"
+        return true;
+    }
+
+    private void ApplyRangeSelection(int start, int end)
+    {
+        foreach (var i in PlaylistItems)
+            i.IsSelected = i.Index >= start && i.Index <= end;
     }
 
     // ═════════════════════════ Download ═════════════════════════
@@ -834,7 +886,19 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            if (IsPlaylist)
+            if (_isImportedList)
+            {
+                // Imported .txt: each row is a distinct URL — download the selected ones as a batch.
+                var selected = PlaylistItems.Where(i => i.IsSelected).ToList();
+                BatchTotal = selected.Count;
+                BatchCurrent = 0;
+                var urls = selected.Select(i => i.WebpageUrl).ToList();
+                var dir = string.IsNullOrEmpty(_importFolder) ? outDir : Path.Combine(outDir, _importFolder);
+                var req = new BatchDownloadRequest(urls, dir, "%(title)s.%(ext)s", audio, advanced, MaxParallel: 3) { Video = video };
+                StatusText = $"Baixando {selected.Count} itens...";
+                await _service.DownloadBatchAsync(req, new Progress<BatchProgress>(OnBatchProgress), _downloadCts.Token);
+            }
+            else if (IsPlaylist)
             {
                 var selected = PlaylistItems.Where(i => i.IsSelected).ToList();
                 BatchTotal = selected.Count;
@@ -898,6 +962,148 @@ public sealed class MainViewModel : ObservableObject
         StatusText = IsBatch
             ? $"{stage} {BatchCurrent} de {BatchTotal}"
             : $"{stage} — {p.PercentDone:0.0}%";
+    }
+
+    // ═════════════════════════ Import .txt queue ═════════════════════════
+    private bool CanImportQueue()
+        => !IsDownloading
+           && !IsBusy
+           && YtDlp.Installed
+           && Ffmpeg.Installed
+           && !string.IsNullOrWhiteSpace(Settings.Paths.LastOutputDirectory);
+
+    /// <summary>
+    /// Imports a .txt (1 URL per line) and populates the same checkbox list as a playlist would, so the
+    /// user can review/select and then press Download (which batches the selected distinct URLs). The first
+    /// comment line "# Download as mp3|mp4" seeds the mode (mp3 = audio only, mp4 = video+audio) and the file
+    /// name becomes the output subfolder. Comment (#) and blank lines are ignored.
+    /// </summary>
+    private async Task ImportQueueAsync()
+    {
+        var path = PickQueueFile?.Invoke();
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            return;
+
+        string[] lines;
+        try { lines = await File.ReadAllLinesAsync(path); }
+        catch (Exception ex) { StatusText = $"Erro lendo .txt: {ex.Message}"; return; }
+
+        var (asVideo, urls) = ParseQueueFile(lines);
+        if (urls.Count == 0)
+        {
+            StatusText = "O .txt não tem nenhuma URL.";
+            return;
+        }
+
+        var folder = SanitizeFolderName(Path.GetFileNameWithoutExtension(path));
+
+        // Seed the mode from the directive; the user can still tweak the video options before downloading.
+        Settings.Video.DownloadVideo = asVideo;
+        if (asVideo)
+            Settings.Video.IncludeAudio = true;
+
+        _analyzeCts = new CancellationTokenSource();
+        var ct = _analyzeCts.Token;
+        IsBusy = true;
+        IsIndeterminate = true;
+        try
+        {
+            DetachPlaylistHandlers();
+            PlaylistItems.Clear();
+            SingleVideo = null;
+            _currentPlaylistUrl = null;
+            _isImportedList = true;
+            _importFolder = folder;
+            IsPlaylist = true;
+            PlaylistTitle = folder;
+            PlaylistUploader = null;
+
+            int idx = 1;
+            foreach (var url in urls)
+            {
+                ct.ThrowIfCancellationRequested();
+                StatusText = $"Analisando {idx} de {urls.Count}...";
+                var info = await ResolveVideoInfoAsync(url, ct);
+                var vm = new PlaylistItemViewModel(info, idx++);
+                vm.PropertyChanged += OnPlaylistItemChanged;
+                PlaylistItems.Add(vm);
+            }
+
+            SelectedPlaylistItem = PlaylistItems.FirstOrDefault();
+            HasResult = true;
+            _ = LoadAllThumbnailsAsync();
+            OnPropertyChanged(nameof(SelectedCount));
+            OnPropertyChanged(nameof(SelectedCountText));
+            UpdateTemplatePreview();
+            DownloadCommand.NotifyCanExecuteChanged();
+            StatusText = $"Lista '{folder}' pronta — {PlaylistItems.Count} itens";
+        }
+        catch (OperationCanceledException) { StatusText = "Importação cancelada."; }
+        catch (Exception ex) { StatusText = $"Erro na importação: {ex.Message}"; }
+        finally
+        {
+            IsBusy = false;
+            IsIndeterminate = false;
+        }
+    }
+
+    /// <summary>Resolves one URL to a <see cref="VideoInfo"/> for the list; falls back to the raw URL on failure.</summary>
+    private async Task<VideoInfo> ResolveVideoInfoAsync(string url, CancellationToken ct)
+    {
+        try
+        {
+            return await _service.AnalyzeUrlAsync(url, treatAsPlaylist: false, ct) switch
+            {
+                VideoUrlInfo v => v.Video,
+                PlaylistUrlInfo p => p.Playlist.Items.FirstOrDefault() ?? FallbackVideo(url),
+                _ => FallbackVideo(url),
+            };
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return FallbackVideo(url); }
+    }
+
+    private static VideoInfo FallbackVideo(string url) => new("", url, null, null, null, url);
+
+    private void OnBatchProgress(BatchProgress b)
+    {
+        BatchTotal = b.TotalItems;
+        BatchCurrent = b.CurrentIndex;
+        ProgressValue = b.TotalItems > 0 ? (b.SuccessCount + b.FailureCount) * 100.0 / b.TotalItems : 0;
+        StatusText = $"Baixando {b.CurrentIndex} de {b.TotalItems}  ({b.SuccessCount} ok, {b.FailureCount} falhas)";
+    }
+
+    /// <summary>Reads the "# Download as mp3|mp4" directive and the URL lines from an imported .txt.</summary>
+    private static (bool asVideo, List<string> urls) ParseQueueFile(IEnumerable<string> lines)
+    {
+        bool asVideo = false, modeFound = false;
+        var urls = new List<string>();
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0)
+                continue;
+            if (line.StartsWith('#'))
+            {
+                if (!modeFound)
+                {
+                    var m = Regex.Match(line, @"download\s+as\s+(mp4|mp3)", RegexOptions.IgnoreCase);
+                    if (m.Success) { asVideo = m.Groups[1].Value.Equals("mp4", StringComparison.OrdinalIgnoreCase); modeFound = true; }
+                }
+                continue;   // comments never become URLs
+            }
+            urls.Add(line);
+        }
+        return (asVideo, urls);
+    }
+
+    private static string SanitizeFolderName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "playlist";
+        foreach (var c in Path.GetInvalidFileNameChars())
+            name = name.Replace(c, '_');
+        return name.Trim();
     }
 
     // ═════════════════════════ Tools / updates ═════════════════════════

@@ -95,6 +95,9 @@
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Content="Analisar" Command="{Binding AnalyzeCommand}"
                                                 MinWidth="100" Margin="10,0,0,0"/>
+                                        <Button DockPanel.Dock="Right" Content="Importar .txt" Command="{Binding ImportQueueCommand}"
+                                                Style="{StaticResource GhostButton}" Padding="10,5" Margin="10,0,0,0"
+                                                ToolTip="Importa um .txt (1 URL por linha) e mostra como lista com checkboxes — baixa ao clicar em Baixar.&#10;1ª linha: &quot;# Download as mp3&quot; (só áudio) ou &quot;# Download as mp4&quot; (vídeo+áudio).&#10;O nome do arquivo vira a subpasta de saída."/>
                                         <TextBox VerticalContentAlignment="Center"
                                                  Text="{Binding Url, UpdateSourceTrigger=PropertyChanged}"
                                                  ToolTip="Cole uma URL de vídeo ou playlist do YouTube">

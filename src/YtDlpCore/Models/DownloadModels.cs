@@ -25,7 +25,11 @@ public record BatchDownloadRequest(
     string OutputTemplate,
     AudioOptions Audio,
     AdvancedOptions Advanced,
-    int MaxParallel = 3);
+    int MaxParallel = 3)
+{
+    /// <summary>Video vs. audio-only mode (and speed) shared by every URL in the batch.</summary>
+    public VideoOptions Video { get; init; } = new();
+}
 
 public record AudioOptions(
     string Bitrate = "192k",          // 128k | 192k | 320k

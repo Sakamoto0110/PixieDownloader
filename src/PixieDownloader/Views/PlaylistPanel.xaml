@@ -26,7 +26,8 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBox Grid.Column="0" Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
-                         VerticalContentAlignment="Center" ToolTip="Filtrar por título ou canal"/>
+                         VerticalContentAlignment="Center"
+                         ToolTip="Filtrar por título/canal — ou selecionar por posição:&#10;%[1:20] seleciona os itens 1 a 20 (e deseleciona o resto).&#10;Também: %[5:] (do 5 ao fim), %[:10] (até o 10), %[7] (só o 7)."/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
                     <Button Content="Tudo" Style="{StaticResource GhostButton}" Padding="10,5" Command="{Binding SelectAllCommand}"/>
                     <Button Content="Inverter" Style="{StaticResource GhostButton}" Padding="10,5" Margin="6,0,0,0" Command="{Binding InvertSelectionCommand}"/>
