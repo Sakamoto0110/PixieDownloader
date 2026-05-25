@@ -6,4 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- The smoke-test harness exercises internal helpers (e.g. BuildSpeedPassArgs) directly. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="SmokeTest" />
+  </ItemGroup>
+
 </Project>

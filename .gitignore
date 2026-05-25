@@ -23,3 +23,6 @@ settings.json.bak
 # NuGet
 *.nupkg
 packages/
+
+# Smoke test: local-only URL for the online (B) test
+test.txt
