@@ -183,7 +183,7 @@
             <DockPanel>
                 <Button DockPanel.Dock="Right" Content="Cancelar" Style="{StaticResource GhostButton}" MinWidth="100" Margin="8,0,0,0"
                         Command="{Binding CancelCommand}"
-                        Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVis}}"/>
+                        Visibility="{Binding IsCancellable, Converter={StaticResource BoolToVis}}"/>
 
                 <Button DockPanel.Dock="Right" Content="Baixar selecionados" MinWidth="180" Padding="16,9"
                         Command="{Binding DownloadCommand}"

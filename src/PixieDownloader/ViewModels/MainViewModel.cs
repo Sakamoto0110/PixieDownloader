@@ -353,7 +353,9 @@ public sealed class MainViewModel : ObservableObject
             {
                 AnalyzeCommand.NotifyCanExecuteChanged();
                 DownloadCommand.NotifyCanExecuteChanged();
+                CancelCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(ShowProgress));
+                OnPropertyChanged(nameof(IsCancellable));
             }
         }
     }
@@ -554,6 +556,9 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>The progress bar is only shown while something is actually running (idle = hidden).</summary>
     public bool ShowProgress => IsBusy || IsDownloading || IsIndeterminate || YtDlp.IsWorking || Ffmpeg.IsWorking;
 
+    /// <summary>The cancel button is shown while a download OR a URL analysis/import is running.</summary>
+    public bool IsCancellable => IsDownloading || IsBusy;
+
     private bool _isDownloading;
     public bool IsDownloading
     {
@@ -566,6 +571,7 @@ public sealed class MainViewModel : ObservableObject
                 CancelCommand.NotifyCanExecuteChanged();
                 AnalyzeCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(ShowProgress));
+                OnPropertyChanged(nameof(IsCancellable));
             }
         }
     }
@@ -939,11 +945,14 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private bool CanCancel() => IsDownloading;
+    private bool CanCancel() => IsDownloading || IsBusy;
 
     private void Cancel()
     {
+        // Cancel whichever operation is running: a download, or a URL analysis / .txt import.
         _downloadCts?.Cancel();
+        _analyzeCts?.Cancel();
+        _autoAnalyzeCts?.Cancel();
         StatusText = "Cancelando...";
     }
 

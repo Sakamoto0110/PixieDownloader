@@ -183,7 +183,9 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
     }
 
     private static readonly string[] VideoExtensions = [".mp4", ".mkv", ".webm", ".mov"];
-    private static readonly string[] DeliverExtensions = [".mp4", ".mp3"];
+    // Files moved from the work folder to the output dir: the produced video — mp4 after a successful pass,
+    // or the original container if the pass failed / ffmpeg is missing — plus any separately-extracted mp3.
+    private static readonly string[] DeliverExtensions = [".mp4", ".mkv", ".webm", ".mov", ".mp3"];
 
     /// <summary>
     /// Runs after a successful download into <paramref name="workDir"/>. Locates the produced video file(s)
@@ -246,7 +248,9 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             try { if (File.Exists(dest)) File.Delete(dest); } catch { /* ignore */ }
             File.Move(file, dest);
-            if (mainPath is null && dest.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+            // The "main" delivered file is the video (prefer mp4 over a fallback container); mp3 is secondary.
+            var ext = Path.GetExtension(dest).ToLowerInvariant();
+            if (VideoExtensions.Contains(ext) && (mainPath is null || ext == ".mp4"))
                 mainPath = dest;
         }
         return mainPath;

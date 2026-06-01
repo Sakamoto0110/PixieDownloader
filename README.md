@@ -57,11 +57,6 @@ Em resumo: a IA escreveu muito do código, mas quem decidiu *o que* construir, *
 
 ---
 
-## Problemas conhecidos (em análise)
-
-- **Modo vídeo + falha no passo de ffmpeg:** se a mudança de velocidade (ffmpeg) falhar e o arquivo baixado não estiver em `.mp4` (ex.: `.webm`/`.mkv`), ele pode não ser entregue na pasta de saída.
-- **Cancelar importação:** ainda não dá pra cancelar a análise de uma lista `.txt` enquanto as URLs estão sendo processadas (o botão de cancelar só atua durante o download).
-
 ## Licença
 
 [MIT](LICENSE).
