@@ -998,7 +998,9 @@ public sealed class MainViewModel : ObservableObject
         var folder = SanitizeFolderName(Path.GetFileNameWithoutExtension(path));
 
         // Seed the mode from the directive; the user can still tweak the video options before downloading.
-        Settings.Video.DownloadVideo = asVideo;
+        // Go through the VM property (not Settings.Video directly) so the "Baixar vídeo" checkbox and the
+        // video-options section — both bound to this VM property — reflect the imported mode.
+        DownloadVideo = asVideo;
         if (asVideo)
             Settings.Video.IncludeAudio = true;
 

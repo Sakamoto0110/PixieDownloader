@@ -26,3 +26,6 @@ packages/
 
 # Smoke test: local-only URL for the online (B) test
 test.txt
+
+# Claude Code: local-only permission allowlist (not for a public repo)
+.claude/settings.local.json
