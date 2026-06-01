@@ -13,10 +13,13 @@ x86/
 .idea/
 *.userprefs
 
-# Runtime artifacts created next to the executable
-tools/
-cache/
-logs/
+# Runtime artifacts created next to the executable.
+# Anchored to the repo root (leading slash) so they don't also match the source
+# folders src/YtDlpCore/Tools and src/YtDlpCore/Cache — git ignore is case-insensitive
+# on Windows, and an unanchored "tools/"/"cache/" was swallowing that source code.
+/tools/
+/cache/
+/logs/
 settings.json
 settings.json.bak
 
