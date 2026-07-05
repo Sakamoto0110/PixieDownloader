@@ -36,11 +36,14 @@ public partial class App : Application
         // ───── Composition root: wire the object graph by hand (no DI container) ─────
         _logger = new SessionLogger();
         _settings = new SettingsService(log: _logger.Log);
+
+        // Load settings synchronously before constructing the VM — it copies some settings
+        // (e.g. TreatAsPlaylist) into plain fields at construction time, so loading late would
+        // leave those fields stuck on AppSettings' hardcoded defaults instead of the saved values.
+        _settings.LoadAsync().GetAwaiter().GetResult();
+
         _ytDlpService = new YtDlpService(_logger);
         var viewModel = new MainViewModel(_ytDlpService, _settings, _logger);
-
-        // Load settings synchronously before the UI binds (fast, one small file, no window yet).
-        _settings.LoadAsync().GetAwaiter().GetResult();
 
         var window = new MainWindow(viewModel);
         MainWindow = window;
