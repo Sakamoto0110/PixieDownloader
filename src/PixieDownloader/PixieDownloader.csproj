@@ -19,4 +19,11 @@
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- dotnet publish -c Release -> single PixieDownloader.exe (framework-dependent: needs the .NET 10 Desktop Runtime installed). -->
+  <PropertyGroup>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+
 </Project>
