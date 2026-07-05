@@ -9,7 +9,8 @@ App desktop **WPF / .NET 10** (Windows) — uma interface gráfica para o [`yt-d
 ## Recursos
 
 - 🎵 **Áudio (MP3)** com bitrate ajustável (128/192/320k), thumbnail e metadados embutidos.
-- 🎬 **Vídeo (MP4)** com opções de manter/remover áudio, extrair um MP3 separado, e **mudar a velocidade** (0.1×–8×, slowmo ou acelerado).
+- 🎬 **Vídeo (MP4)** com opções de manter/remover áudio, extrair um MP3 separado, **mudar a velocidade** (0.1×–8×, slowmo ou acelerado) e **recortar por janela de tempo** (início/fim precisos).
+- 🖼️ **Extrair GIF** de um trecho do vídeo, com controle fino de início/duração.
 - 📋 **Playlists**: analisa a playlist e mostra os itens em uma lista com checkboxes (thumbnails + preview) pra você escolher o que baixar.
 - 📄 **Importar `.txt`**: uma URL por linha vira uma lista revisável; a 1ª linha (`# Download as mp3|mp4`) define o modo, e o nome do arquivo vira a subpasta de saída.
 - 🔎 **Seleção por posição** na busca: `%[1:20]` seleciona os itens 1 a 20, `%[5:]`, `%[:10]`, `%[7]`.
