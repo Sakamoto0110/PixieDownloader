@@ -117,21 +117,96 @@
                                     <!-- Video options — revealed when "Baixar vídeo" is checked -->
                                     <StackPanel Visibility="{Binding DownloadVideo, Converter={StaticResource BoolToVis}}">
                                         <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,1,0,0" Margin="0,12,0,0"/>
-                                        <CheckBox Content="Extrair com áudio" Margin="0,12,0,0"
-                                                  IsChecked="{Binding Settings.Video.IncludeAudio, Mode=TwoWay}"
-                                                  ToolTip="Desmarcada: o MP4 vem sem áudio (mudo)"/>
-                                        <CheckBox Content="Extrair áudio separado em .mp3" Margin="0,8,0,0"
-                                                  IsChecked="{Binding Settings.Video.ExtractAudioSeparate, Mode=TwoWay}"
-                                                  ToolTip="Gera também um arquivo .mp3 só com o áudio, ao lado do vídeo"/>
-                                        <DockPanel Margin="0,14,0,0">
-                                            <TextBlock DockPanel.Dock="Right" Style="{StaticResource Hint}" VerticalAlignment="Center"
-                                                       Text="{Binding Settings.Video.Speed, StringFormat={}{0:0.##}x}"/>
-                                            <TextBlock Text="Velocidade do vídeo" Style="{StaticResource Label}"/>
-                                        </DockPanel>
-                                        <Slider Minimum="0.1" Maximum="8" IsSnapToTickEnabled="True" TickFrequency="0.05"
-                                                Value="{Binding Settings.Video.Speed, Mode=TwoWay}"/>
-                                        <TextBlock Text="Abaixo de 1x = câmera lenta; acima = acelerado. Re-encoda o vídeo (pode demorar)."
-                                                   Style="{StaticResource Hint}" Margin="0,4,0,0"/>
+                                        <CheckBox Content="Extrair GIF" Margin="0,12,0,0"
+                                                  IsChecked="{Binding ExtractGif, Mode=TwoWay}"
+                                                  ToolTip="Extrai só o trecho selecionado abaixo como um .gif animado (sem áudio), em vez do vídeo inteiro"/>
+
+                                        <StackPanel Visibility="{Binding ExtractGif, Converter={StaticResource InverseBoolToVis}}">
+                                            <CheckBox Content="Extrair com áudio" Margin="0,8,0,0"
+                                                      IsChecked="{Binding Settings.Video.IncludeAudio, Mode=TwoWay}"
+                                                      ToolTip="Desmarcada: o MP4 vem sem áudio (mudo)"/>
+                                            <CheckBox Content="Extrair áudio separado em .mp3" Margin="0,8,0,0"
+                                                      IsChecked="{Binding Settings.Video.ExtractAudioSeparate, Mode=TwoWay}"
+                                                      ToolTip="Gera também um arquivo .mp3 só com o áudio, ao lado do vídeo"/>
+                                            <DockPanel Margin="0,14,0,0">
+                                                <TextBlock DockPanel.Dock="Right" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                                           Text="{Binding Settings.Video.Speed, StringFormat={}{0:0.##}x}"/>
+                                                <TextBlock Text="Velocidade do vídeo" Style="{StaticResource Label}"/>
+                                            </DockPanel>
+                                            <Slider Minimum="0.1" Maximum="8" IsSnapToTickEnabled="True" TickFrequency="0.05"
+                                                    Value="{Binding Settings.Video.Speed, Mode=TwoWay}"/>
+                                            <TextBlock Text="Abaixo de 1x = câmera lenta; acima = acelerado. Re-encoda o vídeo (pode demorar)."
+                                                       Style="{StaticResource Hint}" Margin="0,4,0,0"/>
+                                        </StackPanel>
+
+                                        <!-- Recorte genérico (início/fim) — qualquer download de vídeo, exceto modo GIF -->
+                                        <StackPanel Visibility="{Binding ShowGenericTrim, Converter={StaticResource BoolToVis}}">
+                                            <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,1,0,0" Margin="0,12,0,0"/>
+                                            <DockPanel Margin="0,12,0,0">
+                                                <TextBlock DockPanel.Dock="Right" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                                           Text="{Binding TrimRangeText}"/>
+                                                <TextBlock Text="Recorte (início / fim)" Style="{StaticResource Label}"/>
+                                            </DockPanel>
+                                            <DockPanel Margin="0,6,0,0">
+                                                <TextBox DockPanel.Dock="Right" Width="110" VerticalContentAlignment="Center"
+                                                         Text="{Binding TrimStartText, UpdateSourceTrigger=LostFocus}"
+                                                         ToolTip="Início exato com milissegundos (h:mm:ss.fff, ex.: 3:15:42.500) — em vídeos longos o slider sozinho não é preciso o bastante"/>
+                                                <TextBlock Text="Início" Style="{StaticResource Hint}"/>
+                                            </DockPanel>
+                                            <Slider Minimum="0" Maximum="{Binding TrimMaxSeconds}" Value="{Binding TrimStartSeconds, Mode=TwoWay}"/>
+                                            <TextBlock Text="Fim" Style="{StaticResource Hint}" Margin="0,6,0,0"/>
+                                            <Slider Minimum="0" Maximum="{Binding TrimMaxSeconds}" Value="{Binding TrimEndSeconds, Mode=TwoWay}"/>
+                                            <TextBlock Text="Baixa só esse trecho do vídeo (yt-dlp --download-sections, corte exato via --force-keyframes-at-cuts). Deixe os dois extremos pra baixar o vídeo inteiro."
+                                                       Style="{StaticResource Hint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                        <!-- Recorte do GIF: início (posição, útil em vídeos longos) + duração curta e amigável -->
+                                        <StackPanel Visibility="{Binding ShowGifTrim, Converter={StaticResource BoolToVis}}">
+                                            <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,1,0,0" Margin="0,12,0,0"/>
+                                            <DockPanel Margin="0,12,0,0">
+                                                <TextBlock DockPanel.Dock="Right" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                                           Text="{Binding GifRangeText}"/>
+                                                <TextBlock Text="Trecho do GIF" Style="{StaticResource Label}"/>
+                                            </DockPanel>
+                                            <DockPanel Margin="0,6,0,0">
+                                                <TextBox DockPanel.Dock="Right" Width="110" VerticalContentAlignment="Center"
+                                                         Text="{Binding TrimStartText, UpdateSourceTrigger=LostFocus}"
+                                                         ToolTip="Início exato com milissegundos (h:mm:ss.fff, ex.: 3:15:42.500) — em vídeos longos o slider sozinho não é preciso o bastante"/>
+                                                <TextBlock Text="Início (posição no vídeo)" Style="{StaticResource Hint}"/>
+                                            </DockPanel>
+                                            <Slider Minimum="0" Maximum="{Binding TrimMaxSeconds}" Value="{Binding TrimStartSeconds, Mode=TwoWay}"/>
+                                            <DockPanel Margin="0,6,0,0">
+                                                <TextBox DockPanel.Dock="Right" Width="90" VerticalContentAlignment="Center"
+                                                         Text="{Binding GifDurationText, UpdateSourceTrigger=LostFocus}"
+                                                         ToolTip="Duração exata em segundos (ex.: 1.25) — o slider sozinho não é preciso o bastante pra achar o tamanho exato de um loop"/>
+                                                <TextBlock Text="Duração do GIF (segundos)" Style="{StaticResource Hint}"/>
+                                            </DockPanel>
+                                            <Slider Minimum="1" Maximum="20" SmallChange="0.05" LargeChange="1"
+                                                    Value="{Binding GifDurationSeconds, Mode=TwoWay}"/>
+                                            <TextBlock Text="Baixa só esse trecho (independente da duração do vídeo original) e converte pra .gif animado, sem áudio. Ajuste fino: digite os valores exatos à direita."
+                                                       Style="{StaticResource Hint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                                            <DockPanel Margin="0,14,0,0">
+                                                <TextBlock DockPanel.Dock="Right" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                                           Text="{Binding Settings.Video.GifSpeed, StringFormat={}{0:0.00}x}"/>
+                                                <TextBlock Text="Velocidade do GIF" Style="{StaticResource Label}"/>
+                                            </DockPanel>
+                                            <Slider Minimum="0.25" Maximum="1" IsSnapToTickEnabled="True" TickFrequency="0.25"
+                                                    Value="{Binding Settings.Video.GifSpeed, Mode=TwoWay}"/>
+                                            <TextBlock Text="Câmera lenta pra ver o loop com mais detalhe. Também se aplica à prévia (Analisar GIF)."
+                                                       Style="{StaticResource Hint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                                            <DockPanel Margin="0,12,0,0">
+                                                <Button DockPanel.Dock="Right" Content="Abrir prévia" Command="{Binding OpenGifPreviewCommand}"
+                                                        Style="{StaticResource GhostButton}" Padding="10,5" Margin="8,0,0,0"
+                                                        Visibility="{Binding HasGifPreview, Converter={StaticResource BoolToVis}}"
+                                                        ToolTip="Reabre o trecho já baixado (sem baixar de novo) no player padrão do Windows"/>
+                                                <Button Content="Analisar GIF (baixa ~20s de prévia)" Command="{Binding AnalyzeGifPreviewCommand}"
+                                                        HorizontalAlignment="Left"/>
+                                            </DockPanel>
+                                            <TextBlock Text="Baixa só um trechinho de ~20s a partir do Início e abre no player padrão — use pra achar visualmente o loop exato antes de baixar o GIF de verdade."
+                                                       Style="{StaticResource Hint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </StackPanel>
                             </Border>

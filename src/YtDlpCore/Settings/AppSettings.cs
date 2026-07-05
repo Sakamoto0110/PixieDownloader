@@ -84,6 +84,15 @@ public sealed class VideoSettings : ObservableObject
 
     private double _speed = 1.0;            // 0.1x .. 8x; aplicado ao vídeo via ffmpeg (setpts + atempo)
     public double Speed { get => _speed; set => SetProperty(ref _speed, value); }
+
+    private bool _extractGif;               // true = extrai um trecho curto como .gif animado (sem áudio)
+    public bool ExtractGif { get => _extractGif; set => SetProperty(ref _extractGif, value); }
+
+    private double _gifDurationSeconds = 3.0;   // 1..20s — duração padrão do trecho extraído como GIF
+    public double GifDurationSeconds { get => _gifDurationSeconds; set => SetProperty(ref _gifDurationSeconds, Math.Clamp(value, 1, 20)); }
+
+    private double _gifSpeed = 1.0;         // 0.25x..1.0x — câmera lenta pro GIF, separado do Speed do vídeo normal
+    public double GifSpeed { get => _gifSpeed; set => SetProperty(ref _gifSpeed, value); }
 }
 
 public sealed class AdvancedSettings : ObservableObject

@@ -22,6 +22,7 @@ public sealed class MainViewModel : ObservableObject
     private CancellationTokenSource? _analyzeCts;
     private CancellationTokenSource? _downloadCts;
     private CancellationTokenSource? _autoAnalyzeCts;
+    private CancellationTokenSource? _gifPreviewCts;
     private string? _currentPlaylistUrl;
     private string? _lastAnalyzedUrl;
     private bool _isImportedList;        // true when the list came from an imported .txt (download = batch of distinct URLs)
@@ -71,6 +72,8 @@ public sealed class MainViewModel : ObservableObject
         RunRawCommand = new AsyncRelayCommand(RunRaw);
         ClearOutputCommand = new RelayCommand(ClearOutput);
         CopyOutputCommand = new RelayCommand(CopyOutput);
+        AnalyzeGifPreviewCommand = new AsyncRelayCommand(AnalyzeGifPreviewAsync, CanAnalyzeGifPreview);
+        OpenGifPreviewCommand = new RelayCommand(OpenGifPreview, () => HasGifPreview);
 
         // Restore persisted UI toggles (direct field writes → no side effects on startup).
         _treatAsPlaylist = Settings.Ui.TreatAsPlaylist;
@@ -136,6 +139,8 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand RunRawCommand { get; }
     public RelayCommand ClearOutputCommand { get; }
     public RelayCommand CopyOutputCommand { get; }
+    public AsyncRelayCommand AnalyzeGifPreviewCommand { get; }
+    public RelayCommand OpenGifPreviewCommand { get; }
 
     // ───────────────────────── View interaction hooks (set by MainWindow) ─────────────────────────
     public Func<string?, string?>? PickFolder { get; set; }
@@ -316,6 +321,60 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>Label for the single-video download button — reflects the current mode.</summary>
     public string DownloadButtonLabel => DownloadVideo ? "Baixar vídeo" : "Baixar como MP3";
 
+    /// <summary>
+    /// Extracts a short trimmed clip as an animated .gif (no audio) instead of an MP4. Only takes
+    /// effect for a single (non-playlist) video — see <see cref="CanTrim"/>. Proxies the persisted
+    /// <c>Settings.Video.ExtractGif</c>.
+    /// </summary>
+    public bool ExtractGif
+    {
+        get => Settings.Video.ExtractGif;
+        set
+        {
+            if (Settings.Video.ExtractGif == value)
+                return;
+            Settings.Video.ExtractGif = value;   // persisted (debounced) by SettingsService
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowGenericTrim));
+            OnPropertyChanged(nameof(ShowGifTrim));
+            OnPropertyChanged(nameof(GifRangeText));
+            AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
+            UpdateTemplatePreview();              // output extension flips to .gif
+        }
+    }
+
+    /// <summary>Length (1..20s) of the GIF clip, starting at <see cref="TrimStartSeconds"/>.</summary>
+    public double GifDurationSeconds
+    {
+        get => Settings.Video.GifDurationSeconds;
+        set
+        {
+            var clamped = Math.Clamp(value, 1, 20);
+            if (Settings.Video.GifDurationSeconds == clamped)
+                return;
+            Settings.Video.GifDurationSeconds = clamped;   // persisted (debounced) by SettingsService
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(GifRangeText));
+            OnPropertyChanged(nameof(GifDurationText));
+        }
+    }
+
+    /// <summary>
+    /// Text proxy for exact entry of <see cref="GifDurationSeconds"/> — a real repeating loop rarely
+    /// lands on a round number (1.25s, 1.1s, ...), and the slider alone can only get you close.
+    /// </summary>
+    public string GifDurationText
+    {
+        get => GifDurationSeconds.ToString("0.##", CultureInfo.InvariantCulture);
+        set
+        {
+            if (double.TryParse(value?.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds))
+                GifDurationSeconds = seconds;
+            else
+                OnPropertyChanged();   // revert the textbox to the last valid value
+        }
+    }
+
     /// <summary>Auto-analyzes a freshly pasted/typed URL after a short debounce (no button click needed).</summary>
     private void ScheduleAutoAnalyze(string? value)
     {
@@ -354,6 +413,7 @@ public sealed class MainViewModel : ObservableObject
                 AnalyzeCommand.NotifyCanExecuteChanged();
                 DownloadCommand.NotifyCanExecuteChanged();
                 CancelCommand.NotifyCanExecuteChanged();
+                AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(ShowProgress));
                 OnPropertyChanged(nameof(IsCancellable));
             }
@@ -375,7 +435,16 @@ public sealed class MainViewModel : ObservableObject
     public bool IsPlaylist
     {
         get => _isPlaylist;
-        set => SetProperty(ref _isPlaylist, value);
+        set
+        {
+            if (SetProperty(ref _isPlaylist, value))
+            {
+                OnPropertyChanged(nameof(CanTrim));
+                OnPropertyChanged(nameof(ShowGenericTrim));
+                OnPropertyChanged(nameof(ShowGifTrim));
+                AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
+            }
+        }
     }
 
     private VideoInfo? _singleVideo;
@@ -385,7 +454,202 @@ public sealed class MainViewModel : ObservableObject
         set
         {
             if (SetProperty(ref _singleVideo, value))
+            {
                 OnPropertyChanged(nameof(PreviewUrl));
+                OnPropertyChanged(nameof(TrimMaxSeconds));
+                OnPropertyChanged(nameof(CanTrim));
+                OnPropertyChanged(nameof(ShowGenericTrim));
+                OnPropertyChanged(nameof(ShowGifTrim));
+                AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
+                ResetTrimRange();
+            }
+        }
+    }
+
+    // ───────────────────────── Video trim (start/end window, single video only) ─────────────────────────
+    private const double MinTrimGapSeconds = 0.5;
+
+    private double _trimStartSeconds;
+    public double TrimStartSeconds
+    {
+        get => _trimStartSeconds;
+        set
+        {
+            var max = Math.Max(0, _trimEndSeconds - MinTrimGapSeconds);
+            value = Math.Clamp(value, 0, max);
+            if (SetProperty(ref _trimStartSeconds, value))
+            {
+                OnPropertyChanged(nameof(TrimRangeText));
+                OnPropertyChanged(nameof(GifRangeText));
+                OnPropertyChanged(nameof(TrimStartText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Text proxy for exact entry of <see cref="TrimStartSeconds"/> as h:mm:ss.fff — for a video many
+    /// hours long, dragging the slider alone can't land on a precise (sub-second) position.
+    /// </summary>
+    public string TrimStartText
+    {
+        get => TimeSpan.FromSeconds(TrimStartSeconds).ToString(@"h\:mm\:ss\.fff", CultureInfo.InvariantCulture);
+        set
+        {
+            var text = value?.Trim() ?? "";
+            if (TimeSpan.TryParseExact(text, @"h\:mm\:ss\.fff", CultureInfo.InvariantCulture, out var ts) ||
+                TimeSpan.TryParseExact(text, @"h\:mm\:ss", CultureInfo.InvariantCulture, out ts))
+                TrimStartSeconds = ts.TotalSeconds;
+            else
+                OnPropertyChanged();   // revert the textbox to the last valid value
+        }
+    }
+
+    private double _trimEndSeconds;
+    public double TrimEndSeconds
+    {
+        get => _trimEndSeconds;
+        set
+        {
+            var min = Math.Min(_trimStartSeconds + MinTrimGapSeconds, TrimMaxSeconds);
+            value = Math.Clamp(value, min, TrimMaxSeconds);
+            if (SetProperty(ref _trimEndSeconds, value))
+                OnPropertyChanged(nameof(TrimRangeText));
+        }
+    }
+
+    /// <summary>Upper bound for both trim sliders — the analyzed single video's duration, or 0 when unknown.</summary>
+    public double TrimMaxSeconds => SingleVideo?.Duration?.TotalSeconds ?? 0;
+
+    /// <summary>Trim only applies to a single (non-playlist) video whose duration we know.</summary>
+    public bool CanTrim => !IsPlaylist && TrimMaxSeconds > MinTrimGapSeconds;
+
+    /// <summary>Generic start/end trim controls — shown for a plain trimmed download (not GIF mode).</summary>
+    public bool ShowGenericTrim => CanTrim && !ExtractGif;
+
+    /// <summary>Start + friendly duration controls — shown when extracting a GIF clip.</summary>
+    public bool ShowGifTrim => CanTrim && ExtractGif;
+
+    public string GifRangeText =>
+        $"{FormatTrimTime(TrimStartSeconds)} + {GifDurationSeconds:0.#}s → {FormatTrimTime(Math.Min(TrimStartSeconds + GifDurationSeconds, TrimMaxSeconds))}";
+
+    public string TrimRangeText =>
+        $"{FormatTrimTime(TrimStartSeconds)} – {FormatTrimTime(TrimEndSeconds)}  ({FormatTrimTime(TrimEndSeconds - TrimStartSeconds)})";
+
+    private static string FormatTrimTime(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return ts.TotalHours >= 1
+            ? $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}"
+            : $"{ts.Minutes:D2}:{ts.Seconds:D2}";
+    }
+
+    /// <summary>Resets the trim window to the full video whenever a new single video is analyzed.</summary>
+    private void ResetTrimRange()
+    {
+        _trimStartSeconds = 0;
+        _trimEndSeconds = TrimMaxSeconds;
+        OnPropertyChanged(nameof(TrimStartSeconds));
+        OnPropertyChanged(nameof(TrimEndSeconds));
+        OnPropertyChanged(nameof(TrimRangeText));
+        OnPropertyChanged(nameof(TrimStartText));
+        GifPreviewPath = null;   // any cached preview belonged to the previous video
+    }
+
+    // ───────────────────────── GIF preview cache ─────────────────────────
+    private const int GifPreviewWindowSeconds = 20;
+
+    private string? _gifPreviewPath;
+    public string? GifPreviewPath
+    {
+        get => _gifPreviewPath;
+        private set
+        {
+            if (SetProperty(ref _gifPreviewPath, value))
+            {
+                OnPropertyChanged(nameof(HasGifPreview));
+                OpenGifPreviewCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool HasGifPreview => !string.IsNullOrEmpty(GifPreviewPath);
+
+    private bool CanAnalyzeGifPreview() => !IsBusy && !IsDownloading && ShowGifTrim;
+
+    /// <summary>
+    /// Downloads just a ~20s window starting at <see cref="TrimStartSeconds"/> (via the same
+    /// <c>--download-sections</c> mechanism as the real download) into a small local cache file, then
+    /// opens it in the OS default video player so the exact loop boundaries can be scrubbed frame by
+    /// frame — much cheaper than re-downloading from the source on every timing tweak.
+    /// </summary>
+    private async Task AnalyzeGifPreviewAsync()
+    {
+        if (SingleVideo is not { } v)
+            return;
+
+        _gifPreviewCts = new CancellationTokenSource();
+        IsBusy = true;
+        IsIndeterminate = true;
+        StatusText = "Baixando prévia do GIF...";
+        try
+        {
+            var dir = Path.Combine(AppContext.BaseDirectory, ".~gif-preview");
+            Directory.CreateDirectory(dir);
+            var previewPath = Path.Combine(dir, "preview.mp4");
+            try { if (File.Exists(previewPath)) File.Delete(previewPath); } catch { /* leave the stale file, still overwritten by yt-dlp */ }
+
+            var end = Math.Min(TrimStartSeconds + GifPreviewWindowSeconds, TrimMaxSeconds);
+            // Speed is applied here too (via the regular, non-GIF speed pass) so the cached preview
+            // plays back at the same rate the final GIF will — useful for spotting the loop in slow-mo.
+            var previewVideo = new VideoOptions(
+                DownloadVideo: true,
+                IncludeAudio: false,
+                Speed: Settings.Video.GifSpeed,
+                StartTime: TimeSpan.FromSeconds(TrimStartSeconds),
+                EndTime: TimeSpan.FromSeconds(end));
+            var previewAudio = new AudioOptions(EmbedThumbnail: false, EmbedMetadata: false);
+            var previewAdvanced = new AdvancedOptions(Settings.Advanced.Retries, Settings.Advanced.TimeoutSeconds, null, Settings.Advanced.CookiesFilePath);
+            var req = new DownloadRequest(v.WebpageUrl, dir, "preview.%(ext)s", previewAudio, previewAdvanced) { Video = previewVideo };
+
+            var result = await _service.DownloadAsync(req, null, _gifPreviewCts.Token);
+            // Use the known template path rather than the parsed stdout destination — yt-dlp's console
+            // output for a --download-sections clip has extra ffmpeg/merge lines that make the generic
+            // "Destination:" parsing unreliable here, but we already know exactly where this one lands.
+            if (result.Success && File.Exists(previewPath))
+            {
+                GifPreviewPath = previewPath;
+                OpenFolderPath?.Invoke(previewPath);   // opens with the OS default video player
+                StatusText = "Prévia baixada — ajuste os tempos e repita se precisar.";
+            }
+            else
+            {
+                GifPreviewPath = null;
+                StatusText = result.Success
+                    ? "Prévia baixada, mas o arquivo não foi encontrado."
+                    : $"Falha na prévia: {result.ErrorMessage}";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Prévia cancelada.";
+        }
+        finally
+        {
+            IsBusy = false;
+            IsIndeterminate = false;
+        }
+    }
+
+    private void OpenGifPreview()
+    {
+        if (GifPreviewPath is { } path && File.Exists(path))
+        {
+            OpenFolderPath?.Invoke(path);
+        }
+        else
+        {
+            GifPreviewPath = null;   // stale pointer — the cached file is gone
+            StatusText = "Prévia não encontrada — clique em Analisar GIF de novo.";
         }
     }
 
@@ -570,6 +834,7 @@ public sealed class MainViewModel : ObservableObject
                 DownloadCommand.NotifyCanExecuteChanged();
                 CancelCommand.NotifyCanExecuteChanged();
                 AnalyzeCommand.NotifyCanExecuteChanged();
+                AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(ShowProgress));
                 OnPropertyChanged(nameof(IsCancellable));
             }
@@ -879,7 +1144,9 @@ public sealed class MainViewModel : ObservableObject
         EtaText = null;
 
         var audio = new AudioOptions(Settings.Audio.Bitrate, Settings.Audio.EmbedThumbnail, Settings.Audio.EmbedMetadata);
-        var video = new VideoOptions(Settings.Video.DownloadVideo, Settings.Video.IncludeAudio, Settings.Video.ExtractAudioSeparate, Settings.Video.Speed);
+        // ExtractGif/StartTime/EndTime are intentionally left out here — they only ever apply to the
+        // single-video branch below (a playlist has no single duration to trim against).
+        var video = new VideoOptions(Settings.Video.DownloadVideo, Settings.Video.IncludeAudio, Settings.Video.ExtractAudioSeparate, Speed: Settings.Video.Speed);
         var advanced = new AdvancedOptions(
             Settings.Advanced.Retries,
             Settings.Advanced.TimeoutSeconds,
@@ -918,7 +1185,26 @@ public sealed class MainViewModel : ObservableObject
             {
                 BatchTotal = 1;
                 BatchCurrent = 1;
-                var req = new DownloadRequest(v.WebpageUrl, outDir, template, audio, advanced) { Video = video };
+                var trimmedVideo = video;
+                if (CanTrim && ExtractGif)
+                {
+                    var end = Math.Min(TrimStartSeconds + GifDurationSeconds, TrimMaxSeconds);
+                    trimmedVideo = video with
+                    {
+                        ExtractGif = true,
+                        IncludeAudio = false,       // a .gif has no audio track
+                        ExtractAudioSeparate = false,
+                        GifSpeed = Settings.Video.GifSpeed,
+                        StartTime = TimeSpan.FromSeconds(TrimStartSeconds),
+                        EndTime = TimeSpan.FromSeconds(end)
+                    };
+                }
+                else if (CanTrim && (TrimStartSeconds > 0 || TrimEndSeconds < TrimMaxSeconds))
+                {
+                    // Only pass a trim window when it's actually a subset of the full video.
+                    trimmedVideo = video with { StartTime = TimeSpan.FromSeconds(TrimStartSeconds), EndTime = TimeSpan.FromSeconds(TrimEndSeconds) };
+                }
+                var req = new DownloadRequest(v.WebpageUrl, outDir, template, audio, advanced) { Video = trimmedVideo };
                 StatusText = "Baixando...";
                 var result = await _service.DownloadAsync(req, progress, _downloadCts.Token);
                 StatusText = result.Success ? "Concluído" : $"Falha: {result.ErrorMessage}";
@@ -953,6 +1239,7 @@ public sealed class MainViewModel : ObservableObject
         _downloadCts?.Cancel();
         _analyzeCts?.Cancel();
         _autoAnalyzeCts?.Cancel();
+        _gifPreviewCts?.Cancel();
         StatusText = "Cancelando...";
     }
 
@@ -1345,7 +1632,7 @@ public sealed class MainViewModel : ObservableObject
             ["playlist_title"] = PlaylistTitle ?? "Playlist",
             ["playlist_index"] = "1",
             ["upload_date"] = "20260523",
-            ["ext"] = DownloadVideo ? "mp4" : "mp3",
+            ["ext"] = ExtractGif ? "gif" : DownloadVideo ? "mp4" : "mp3",
         };
         var rendered = RenderTemplate(Settings.Paths.LastTemplate, values);
         var dir = Settings.Paths.LastOutputDirectory ?? "";

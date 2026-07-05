@@ -104,7 +104,8 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         double lastPercent = 0;
         string? destPath = null;
         string? lastError = null;
-        var primaryExt = request.Video.DownloadVideo ? ".mp4" : ".mp3";   // which Destination line is the final file
+        // which Destination line is the final file
+        var primaryExt = request.Video.ExtractGif ? ".gif" : request.Video.DownloadVideo ? ".mp4" : ".mp3";
 
         void OnStdout(string line)
         {
@@ -184,8 +185,9 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
     private static readonly string[] VideoExtensions = [".mp4", ".mkv", ".webm", ".mov"];
     // Files moved from the work folder to the output dir: the produced video — mp4 after a successful pass,
-    // or the original container if the pass failed / ffmpeg is missing — plus any separately-extracted mp3.
-    private static readonly string[] DeliverExtensions = [".mp4", ".mkv", ".webm", ".mov", ".mp3"];
+    // or the original container if the pass failed / ffmpeg is missing — plus any separately-extracted mp3
+    // or a converted .gif.
+    private static readonly string[] DeliverExtensions = [".mp4", ".mkv", ".webm", ".mov", ".mp3", ".gif"];
 
     /// <summary>
     /// Runs after a successful download into <paramref name="workDir"/>. Locates the produced video file(s)
@@ -209,6 +211,51 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
             Emit(LogLevel.Warning, "Core", "ffmpeg não encontrado — entregando o vídeo sem processar.", request.Url);
         else foreach (var src in videos)
         {
+            // GIF mode: convert the (already-trimmed) clip via a two-pass palette conversion instead
+            // of the speed/audio pass below — a .gif has no audio track, so this replaces the video.
+            if (v.ExtractGif)
+            {
+                // Slow the clip down first (if requested) — setpts has no lower-bound restriction
+                // (unlike atempo for audio, which needs chaining below 0.5x), so a single pass covers
+                // the whole 0.25x..1.0x range; the gif has no audio track to worry about at all.
+                var gifSource = src;
+                string? speedTemp = null;
+                if (SpeedChanged(v.GifSpeed))
+                {
+                    speedTemp = Path.Combine(Path.GetDirectoryName(src)!, Path.GetFileNameWithoutExtension(src) + ".speed.mp4");
+                    Emit(LogLevel.Info, "Core", $"Ajustando velocidade do GIF ({Math.Clamp(v.GifSpeed, 0.1, 8.0):0.##}x)...", request.Url);
+                    var speedCode = await _runner.RunAsync(ffmpeg, BuildSpeedPassArgs(src, speedTemp, v.GifSpeed, includeAudio: false, audioBitrate: ""), OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+                    if (speedCode == 0 && File.Exists(speedTemp))
+                        gifSource = speedTemp;
+                    else
+                        Emit(LogLevel.Warning, "Core", $"ffmpeg falhou ao ajustar a velocidade (código {speedCode}); GIF sairá na velocidade original.", request.Url);
+                }
+
+                var palette = Path.Combine(Path.GetDirectoryName(src)!, "palette.png");
+                var outGif = Path.ChangeExtension(src, ".gif");
+
+                Emit(LogLevel.Info, "Core", "Gerando paleta de cores do GIF...", request.Url);
+                var paletteCode = await _runner.RunAsync(ffmpeg, BuildGifPaletteArgs(gifSource, palette), OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+
+                if (paletteCode == 0 && File.Exists(palette))
+                {
+                    Emit(LogLevel.Info, "Core", "Codificando GIF...", request.Url);
+                    var encodeCode = await _runner.RunAsync(ffmpeg, BuildGifEncodeArgs(gifSource, palette, outGif), OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+                    Emit(encodeCode == 0 && File.Exists(outGif) ? LogLevel.Info : LogLevel.Warning,
+                        "Core", encodeCode == 0 && File.Exists(outGif) ? "GIF gerado." : $"ffmpeg falhou ao codificar o GIF (código {encodeCode}).", request.Url);
+                }
+                else
+                {
+                    Emit(LogLevel.Warning, "Core", $"ffmpeg falhou ao gerar a paleta do GIF (código {paletteCode}).", request.Url);
+                }
+
+                try { File.Delete(src); } catch { /* ignore */ }
+                if (speedTemp is not null)
+                    try { if (File.Exists(speedTemp)) File.Delete(speedTemp); } catch { /* ignore */ }
+                try { if (File.Exists(palette)) File.Delete(palette); } catch { /* ignore */ }
+                continue;
+            }
+
             // (a) Separate MP3 from the original (normal-speed) audio, before we re-encode the video.
             if (v.ExtractAudioSeparate)
             {
@@ -248,9 +295,10 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             try { if (File.Exists(dest)) File.Delete(dest); } catch { /* ignore */ }
             File.Move(file, dest);
-            // The "main" delivered file is the video (prefer mp4 over a fallback container); mp3 is secondary.
+            // The "main" delivered file is the gif (if any), else the video (prefer mp4 over a
+            // fallback container); mp3 is secondary.
             var ext = Path.GetExtension(dest).ToLowerInvariant();
-            if (VideoExtensions.Contains(ext) && (mainPath is null || ext == ".mp4"))
+            if (ext == ".gif" || (VideoExtensions.Contains(ext) && (mainPath is null || ext == ".mp4")))
                 mainPath = dest;
         }
         return mainPath;
@@ -365,6 +413,17 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
                 args.Add("--audio-quality"); args.Add(bitrate);
                 args.Add("-k");   // keep the video file too
             }
+
+            // Time-window trim: download only this section instead of the whole video.
+            // --force-keyframes-at-cuts makes yt-dlp re-encode around the cut points so the
+            // boundaries land on the exact requested time instead of the nearest keyframe.
+            if (r.Video.StartTime is not null || r.Video.EndTime is not null)
+            {
+                var start = r.Video.StartTime?.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture) ?? "0";
+                var end = r.Video.EndTime?.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture) ?? "inf";
+                args.Add("--download-sections"); args.Add($"*{start}-{end}");
+                args.Add("--force-keyframes-at-cuts");
+            }
         }
         else
         {
@@ -427,10 +486,11 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         return args;
     }
 
-    /// <summary>True when the video download needs a post-download ffmpeg pass (speed change, or the
-    /// "silent video + separate MP3" combo where the audio must be stripped from the kept video).</summary>
+    /// <summary>True when the video download needs a post-download ffmpeg pass: a GIF conversion,
+    /// a speed change, or the "silent video + separate MP3" combo where the audio must be stripped
+    /// from the kept video.</summary>
     internal static bool VideoNeedsFfmpegPass(VideoOptions v)
-        => v.DownloadVideo && (SpeedChanged(v.Speed) || (v.ExtractAudioSeparate && !v.IncludeAudio));
+        => v.DownloadVideo && (v.ExtractGif || SpeedChanged(v.Speed) || (v.ExtractAudioSeparate && !v.IncludeAudio));
 
     private static bool SpeedChanged(double speed) => Math.Abs(Math.Clamp(speed, 0.1, 8.0) - 1.0) > 0.001;
 
@@ -467,6 +527,27 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         a.Add(output);
         return [.. a];
     }
+
+    /// <summary>
+    /// Two-pass palette-based GIF conversion (ffmpeg's standard recipe for quality output): first
+    /// builds an optimized color palette for the clip, then re-encodes using it. fps/width are fixed
+    /// at sane defaults for a short animated clip. Audio is never mapped — a GIF has no audio track.
+    /// </summary>
+    internal static string[] BuildGifPaletteArgs(string input, string palettePath, int fps = 12, int width = 480)
+        =>
+        [
+            "-hide_banner", "-loglevel", "error", "-y", "-i", input,
+            "-vf", $"fps={fps},scale={width}:-1:flags=lanczos,palettegen",
+            palettePath
+        ];
+
+    internal static string[] BuildGifEncodeArgs(string input, string palettePath, string output, int fps = 12, int width = 480)
+        =>
+        [
+            "-hide_banner", "-loglevel", "error", "-y", "-i", input, "-i", palettePath,
+            "-filter_complex", $"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+            output
+        ];
 
     private static string AtempoChain(double speed)
     {

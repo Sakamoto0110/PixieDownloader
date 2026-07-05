@@ -40,14 +40,22 @@ public record AudioOptions(
 /// Video-download options. When <see cref="DownloadVideo"/> is false the request is a plain
 /// audio (MP3) extraction. When true, the best video is downloaded to MP4:
 /// <see cref="IncludeAudio"/> controls whether the MP4 keeps its audio track,
-/// <see cref="ExtractAudioSeparate"/> additionally produces a standalone MP3, and
-/// <see cref="Speed"/> (1.0 = normal) re-encodes the video faster/slower.
+/// <see cref="ExtractAudioSeparate"/> additionally produces a standalone MP3,
+/// <see cref="ExtractGif"/> converts the (trimmed) clip to an animated .gif instead of delivering
+/// the MP4 — <see cref="GifSpeed"/> (1.0 = normal) slows that clip down before conversion, separate
+/// from <see cref="Speed"/> which re-encodes a regular (non-GIF) video faster/slower.
+/// <see cref="StartTime"/>/<see cref="EndTime"/>, when set, download only that section of the
+/// source (<c>--download-sections</c>) instead of the whole video.
 /// </summary>
 public record VideoOptions(
     bool DownloadVideo = false,
     bool IncludeAudio = true,
     bool ExtractAudioSeparate = false,
-    double Speed = 1.0);
+    bool ExtractGif = false,
+    double Speed = 1.0,
+    double GifSpeed = 1.0,
+    TimeSpan? StartTime = null,
+    TimeSpan? EndTime = null);
 
 public record AdvancedOptions(
     int Retries = 10,
