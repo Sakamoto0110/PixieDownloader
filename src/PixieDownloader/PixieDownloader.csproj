@@ -20,9 +20,9 @@
   </PropertyGroup>
 
   <!-- dotnet publish -c Release -> a single PixieDownloader.exe. Two flavours, picked by profile: -->
-  <!--   -p:PublishProfile=Portable      framework-dependent, ~1 MB, needs the .NET 10 Desktop Runtime -->
-  <!--   -p:PublishProfile=SelfContained runtime bundled in, ~62 MB, runs on a bare Windows -->
-  <!-- Plain `dotnet publish` with no profile behaves like Portable. -->
+  <!--   -p:PublishProfile=FrameworkDependent ~1 MB, needs the .NET 10 Desktop Runtime installed -->
+  <!--   -p:PublishProfile=SelfContained      ~62 MB, runtime bundled in, runs on a bare Windows -->
+  <!-- Plain `dotnet publish` with no profile behaves like FrameworkDependent. -->
   <!-- Guarded by _IsPublishing so plain builds (and the VS/design-time build) don't get an RID-specific -->
   <!-- output path, which breaks the XAML designer. SelfContained is only defaulted when the profile -->
   <!-- hasn't set it, so the profile wins no matter which one MSBuild evaluates first. -->

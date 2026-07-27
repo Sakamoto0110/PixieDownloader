@@ -8,8 +8,8 @@ App desktop **WPF / .NET 10** (Windows) — GUI para o `yt-dlp` baixar áudio (M
 - Testes unitários (`tests/YtDlpCore.Tests`, xunit — só cobre o `YtDlpOutputParser`): `dotnet test tests/YtDlpCore.Tests`
   - Um teste só: `dotnet test tests/YtDlpCore.Tests --filter "FullyQualifiedName~TryParseProgress_parses_percent_speed_eta"`
 - Publish (sempre um `PixieDownloader.exe` único, dois sabores via profile em `src/PixieDownloader/Properties/PublishProfiles/`):
-  - Portátil (~1 MB, exige o .NET 10 Desktop Runtime na máquina) → `bin/publish/portable/`: `dotnet publish src/PixieDownloader/PixieDownloader.csproj -c Release -p:PublishProfile=Portable`
-  - Self-contained (~62 MB, roda em Windows pelado) → `bin/publish/self-contained/`: `dotnet publish src/PixieDownloader/PixieDownloader.csproj -c Release -p:PublishProfile=SelfContained`
+  - Framework-dependent (~1 MB, exige o .NET 10 Desktop Runtime na máquina) → `bin/publish/framework-dependent/`: `dotnet publish src/PixieDownloader/PixieDownloader.csproj -c Release -p:PublishProfile=FrameworkDependent`
+  - Self-contained (~62 MB, roda em Windows pelado — é este o "portátil" para distribuir) → `bin/publish/self-contained/`: `dotnet publish src/PixieDownloader/PixieDownloader.csproj -c Release -p:PublishProfile=SelfContained`
 - Smoke test de ponta a ponta (offline + online opcional; fecha a instância em execução, builda, faz boot test e roda o harness): `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1`
   - `src/SmokeTest` **não está na `.slnx`** e não é referenciado pelo app — existe só pra exercitar `YtDlpService.BuildSpeedPassArgs`/o pipeline de vídeo via `InternalsVisibleTo`. Harness B (online) só roda se `test.txt` (raiz do repo, git-ignored) tiver uma URL.
 
