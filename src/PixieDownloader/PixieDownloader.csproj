@@ -19,11 +19,21 @@
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
   </PropertyGroup>
 
-  <!-- dotnet publish -c Release -> single PixieDownloader.exe (framework-dependent: needs the .NET 10 Desktop Runtime installed). -->
-  <PropertyGroup>
+  <!-- dotnet publish -c Release -> a single PixieDownloader.exe. Two flavours, picked by profile: -->
+  <!--   -p:PublishProfile=Portable      framework-dependent, ~1 MB, needs the .NET 10 Desktop Runtime -->
+  <!--   -p:PublishProfile=SelfContained runtime bundled in, ~62 MB, runs on a bare Windows -->
+  <!-- Plain `dotnet publish` with no profile behaves like Portable. -->
+  <!-- Guarded by _IsPublishing so plain builds (and the VS/design-time build) don't get an RID-specific -->
+  <!-- output path, which breaks the XAML designer. SelfContained is only defaulted when the profile -->
+  <!-- hasn't set it, so the profile wins no matter which one MSBuild evaluates first. -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>false</SelfContained>
+    <SelfContained Condition="'$(SelfContained)' == ''">false</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
+    <!-- Symbols inside the exe and no .pdb tagging along from YtDlpCore, so publish/ -->
+    <!-- holds nothing but PixieDownloader.exe. -->
+    <DebugType>embedded</DebugType>
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
 
 </Project>
