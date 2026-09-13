@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
@@ -6,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Data;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using PixieDownloader.Mvvm;
 using YtDlpCore;
@@ -20,13 +22,13 @@ public sealed class MainViewModel : ObservableObject
     private readonly Dispatcher _dispatcher;
 
     private CancellationTokenSource? _analyzeCts;
-    private CancellationTokenSource? _downloadCts;
     private CancellationTokenSource? _autoAnalyzeCts;
     private CancellationTokenSource? _gifPreviewCts;
     private string? _currentPlaylistUrl;
     private string? _lastAnalyzedUrl;
-    private bool _isImportedList;        // true when the list came from an imported .txt (download = batch of distinct URLs)
-    private string? _importFolder;       // output subfolder name for the imported list
+    private bool _isImportedList;        // true when the list came from an imported .txt / pasted links (each row is a distinct URL)
+    private string? _importFolder;       // output subfolder name for the imported list (null = output dir itself)
+    private bool _importNumbered;        // imported rows get a "N - " file-name prefix (N = position in the list)
 
     public MainViewModel(IYtDlpService service, SettingsService settings, SessionLogger logger)
     {
@@ -47,11 +49,20 @@ public sealed class MainViewModel : ObservableObject
         SelectAllCommand = new RelayCommand(SelectAll);
         ClearSelectionCommand = new RelayCommand(ClearSelection);
         InvertSelectionCommand = new RelayCommand(InvertSelection);
-        DownloadCommand = new AsyncRelayCommand(DownloadAsync, CanDownload);
-        ImportQueueCommand = new AsyncRelayCommand(ImportQueueAsync, CanImportQueue);
-        CancelCommand = new RelayCommand(Cancel, CanCancel);
-        InstallYtDlpCommand = new AsyncRelayCommand(InstallYtDlpAsync);
-        InstallFfmpegCommand = new AsyncRelayCommand(InstallFfmpegAsync);
+        DownloadCommand = new RelayCommand(Download, CanDownload);
+        ImportQueueCommand = new AsyncRelayCommand(ImportQueueAsync, CanImport);
+        PasteLinksCommand = new AsyncRelayCommand(PasteLinksAsync, CanImport);
+        CancelCommand = new RelayCommand(CancelTopJob, CanCancel);
+        ShowQueueCommand = new RelayCommand(() => SelectedTabIndex = QueueTabIndex);
+        ClearFinishedJobsCommand = new RelayCommand(ClearFinishedJobs, () => HasFinishedJobs);
+        CancelAllJobsCommand = new RelayCommand(CancelAllJobs, () => HasPendingJobs);
+        JobActionCommand = new RelayCommand<DownloadJobViewModel>(JobAction);
+        RetryJobCommand = new RelayCommand<DownloadJobViewModel>(RetryJob);
+        ContinuePendingCommand = new RelayCommand(StartQueue, () => RestoredJobCount > 0);
+        DiscardPendingCommand = new RelayCommand(DiscardRestoredJobs, () => RestoredJobCount > 0);
+        DismissNoticeCommand = new RelayCommand(() => StartupNotice = null);
+        InstallYtDlpCommand = new AsyncRelayCommand(InstallYtDlpAsync, () => !YtDlp.IsWorking);
+        InstallFfmpegCommand = new AsyncRelayCommand(InstallFfmpegAsync, () => !Ffmpeg.IsWorking);
         CheckUpdateCommand = new AsyncRelayCommand(CheckUpdateAsync);
         UpdateYtDlpCommand = new AsyncRelayCommand(UpdateYtDlpAsync);
         BrowseOutputDirectoryCommand = new RelayCommand(BrowseOutputDirectory);
@@ -85,9 +96,12 @@ public sealed class MainViewModel : ObservableObject
         LogsView = CollectionViewSource.GetDefaultView(Logs);
         LogsView.Filter = FilterLogEntry;
 
+        Jobs.CollectionChanged += (_, _) => RefreshQueueState();
+
         // Persist + re-render when settings nodes change.
         Settings.Advanced.PropertyChanged += OnAdvancedSettingsChanged;
         Settings.Paths.PropertyChanged += OnPathsSettingsChanged;
+        Settings.Audio.PropertyChanged += OnAudioSettingsChanged;
 
         // Show the progress bar while a tool install/update is running, too.
         YtDlp.PropertyChanged += OnToolStatusChanged;
@@ -114,9 +128,18 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand SelectAllCommand { get; }
     public RelayCommand ClearSelectionCommand { get; }
     public RelayCommand InvertSelectionCommand { get; }
-    public AsyncRelayCommand DownloadCommand { get; }
+    public RelayCommand DownloadCommand { get; }
     public AsyncRelayCommand ImportQueueCommand { get; }
+    public AsyncRelayCommand PasteLinksCommand { get; }
     public RelayCommand CancelCommand { get; }
+    public RelayCommand ShowQueueCommand { get; }
+    public RelayCommand ClearFinishedJobsCommand { get; }
+    public RelayCommand CancelAllJobsCommand { get; }
+    public RelayCommand<DownloadJobViewModel> JobActionCommand { get; }
+    public RelayCommand<DownloadJobViewModel> RetryJobCommand { get; }
+    public RelayCommand ContinuePendingCommand { get; }
+    public RelayCommand DiscardPendingCommand { get; }
+    public RelayCommand DismissNoticeCommand { get; }
     public AsyncRelayCommand InstallYtDlpCommand { get; }
     public AsyncRelayCommand InstallFfmpegCommand { get; }
     public AsyncRelayCommand CheckUpdateCommand { get; }
@@ -146,10 +169,22 @@ public sealed class MainViewModel : ObservableObject
     public Func<string?, string?>? PickFolder { get; set; }
     public Func<string?>? PickCookiesFile { get; set; }
     public Func<string?>? PickQueueFile { get; set; }
+    /// <summary>Opens the "Colar links" dialog; null when cancelled.</summary>
+    public Func<PastedLinks?>? PickPastedLinks { get; set; }
     public Func<Task<FfmpegInstallKind?>>? ChooseFfmpegKind { get; set; }
     public Action<string>? CopyToClipboard { get; set; }
     public Action<string>? OpenFolderPath { get; set; }
     public Action<string>? OpenUrl { get; set; }
+
+    /// <summary>Index of the selected tab: 0 = Baixar, 1 = Fila, 2 = Debug, 3 = Logs.</summary>
+    public const int QueueTabIndex = 1;
+
+    private int _selectedTabIndex;
+    public int SelectedTabIndex
+    {
+        get => _selectedTabIndex;
+        set => SetProperty(ref _selectedTabIndex, value);
+    }
 
     // ───────────────────────── Exposed settings & options ─────────────────────────
     public AppSettings Settings => _settings.Current;
@@ -318,8 +353,21 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>Label for the single-video download button — reflects the current mode.</summary>
-    public string DownloadButtonLabel => DownloadVideo ? "Baixar vídeo" : "Baixar como MP3";
+    /// <summary>
+    /// Label of the main action button: what the current analysis would enqueue, or — with nothing
+    /// analysed and downloads restored from the previous session — the offer to resume them.
+    /// </summary>
+    public string DownloadButtonLabel
+    {
+        get
+        {
+            if (HasResult && IsPlaylist)
+                return $"Baixar selecionados ({SelectedCount})";
+            if (!HasResult && RestoredJobCount > 0)
+                return ContinueLabel;
+            return DownloadVideo ? "Baixar vídeo" : "Baixar como MP3";
+        }
+    }
 
     /// <summary>
     /// Extracts a short trimmed clip as an animated .gif (no audio) instead of an MP4. Only takes
@@ -375,7 +423,11 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>Auto-analyzes a freshly pasted/typed URL after a short debounce (no button click needed).</summary>
+    /// <summary>
+    /// Auto-analyzes a freshly pasted/typed URL after a short debounce — there is no "Analisar" button;
+    /// Enter re-runs the analysis of the current URL (e.g. to retry after a network error).
+    /// A new URL supersedes an analysis still running for the previous one.
+    /// </summary>
     private void ScheduleAutoAnalyze(string? value)
     {
         _autoAnalyzeCts?.Cancel();
@@ -386,6 +438,8 @@ public sealed class MainViewModel : ObservableObject
             return;
         if (string.Equals(url, _lastAnalyzedUrl, StringComparison.OrdinalIgnoreCase))
             return;
+
+        _analyzeCts?.Cancel();   // the running analysis (if any) is for a URL the user just replaced
 
         _autoAnalyzeCts = new CancellationTokenSource();
         var token = _autoAnalyzeCts.Token;
@@ -412,10 +466,10 @@ public sealed class MainViewModel : ObservableObject
             {
                 AnalyzeCommand.NotifyCanExecuteChanged();
                 DownloadCommand.NotifyCanExecuteChanged();
-                CancelCommand.NotifyCanExecuteChanged();
+                ImportQueueCommand.NotifyCanExecuteChanged();
+                PasteLinksCommand.NotifyCanExecuteChanged();
                 AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(ShowProgress));
-                OnPropertyChanged(nameof(IsCancellable));
             }
         }
     }
@@ -427,7 +481,10 @@ public sealed class MainViewModel : ObservableObject
         set
         {
             if (SetProperty(ref _hasResult, value))
+            {
                 DownloadCommand.NotifyCanExecuteChanged();
+                OnPropertyChanged(nameof(DownloadButtonLabel));
+            }
         }
     }
 
@@ -442,6 +499,7 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanTrim));
                 OnPropertyChanged(nameof(ShowGenericTrim));
                 OnPropertyChanged(nameof(ShowGifTrim));
+                OnPropertyChanged(nameof(DownloadButtonLabel));
                 AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
             }
         }
@@ -462,6 +520,7 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(ShowGifTrim));
                 AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
                 ResetTrimRange();
+                RebuildMetadataItems();
             }
         }
     }
@@ -705,6 +764,7 @@ public sealed class MainViewModel : ObservableObject
     {
         if (value is not null)
             _ = LoadPreviewThumbnailAsync(value.Id, value.ThumbnailUrl);
+        RebuildMetadataItems();
     }
 
     public int SelectedCount => PlaylistItems.Count(i => i.IsSelected);
@@ -803,7 +863,11 @@ public sealed class MainViewModel : ObservableObject
     public double ProgressValue
     {
         get => _progressValue;
-        set => SetProperty(ref _progressValue, value);
+        set
+        {
+            if (SetProperty(ref _progressValue, value))
+                OnPropertyChanged(nameof(TaskbarProgress));
+        }
     }
 
     private bool _isIndeterminate;
@@ -820,23 +884,19 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>The progress bar is only shown while something is actually running (idle = hidden).</summary>
     public bool ShowProgress => IsBusy || IsDownloading || IsIndeterminate || YtDlp.IsWorking || Ffmpeg.IsWorking;
 
-    /// <summary>The cancel button is shown while a download OR a URL analysis/import is running.</summary>
-    public bool IsCancellable => IsDownloading || IsBusy;
-
+    /// <summary>True while at least one queue request is downloading or being processed by ffmpeg.</summary>
     private bool _isDownloading;
     public bool IsDownloading
     {
         get => _isDownloading;
-        set
+        private set
         {
             if (SetProperty(ref _isDownloading, value))
             {
-                DownloadCommand.NotifyCanExecuteChanged();
                 CancelCommand.NotifyCanExecuteChanged();
-                AnalyzeCommand.NotifyCanExecuteChanged();
                 AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
                 OnPropertyChanged(nameof(ShowProgress));
-                OnPropertyChanged(nameof(IsCancellable));
+                OnPropertyChanged(nameof(TaskbarState));
             }
         }
     }
@@ -855,25 +915,9 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _etaText, value);
     }
 
-    private int _batchCurrent;
-    public int BatchCurrent
-    {
-        get => _batchCurrent;
-        set => SetProperty(ref _batchCurrent, value);
-    }
-
-    private int _batchTotal;
-    public int BatchTotal
-    {
-        get => _batchTotal;
-        set
-        {
-            if (SetProperty(ref _batchTotal, value))
-                OnBatchTotalChanged(value);
-        }
-    }
-    public bool IsBatch => BatchTotal > 1;
-    private void OnBatchTotalChanged(int value) => OnPropertyChanged(nameof(IsBatch));
+    /// <summary>Overall queue progress mirrored on the taskbar button (0..1).</summary>
+    public double TaskbarProgress => ProgressValue / 100.0;
+    public TaskbarItemProgressState TaskbarState => IsDownloading ? TaskbarItemProgressState.Normal : TaskbarItemProgressState.None;
 
     // ───────────────────────── Tools / updates ─────────────────────────
     public ToolStatusViewModel YtDlp { get; } = new("yt-dlp");
@@ -950,43 +994,119 @@ public sealed class MainViewModel : ObservableObject
     {
         _service.LogEmitted += OnLogEmitted;
         UpdateTemplatePreview();
+
+        // The pending file says which job folders belong to a processing that can resume; everything
+        // else left in the staging folder is a leftover of a session that died mid-download (a clean
+        // exit never leaves any): tell the user and throw it away.
+        await LoadPendingJobsAsync();
+        var removed = _service.PurgeStaging(keep: PreservedWorkDirs());
+        if (removed > 0)
+            StartupNotice = $"A sessão anterior foi interrompida com downloads em andamento — {removed} pasta(s) temporária(s) foram apagadas. O que ficou pendente pode ser retomado pela fila.";
+
         await RefreshToolsAsync();
 
-        if (Settings.Tools.AutoCheckUpdatesOnStartup && YtDlp.Installed)
+        // Missing tools are fetched without asking (first run of a package that ships none); a yt-dlp
+        // that was just downloaded is the latest by definition, so the update check only runs for one
+        // that was already there.
+        var freshYtDlp = await EnsureToolsAsync();
+        if (Settings.Tools.AutoCheckUpdatesOnStartup && YtDlp.Installed && !freshYtDlp)
             _ = CheckUpdateAsync();
     }
 
-    public void OnClosing()
+    /// <summary>
+    /// Downloads whatever is missing — yt-dlp first (small), then ffmpeg in its "Completo" build (the
+    /// installer dialog's recommended pick). A failure (offline, blocked) just leaves the red dot and the
+    /// manual "Instalar" button, exactly as before. Returns true when yt-dlp was downloaded now.
+    /// </summary>
+    private async Task<bool> EnsureToolsAsync()
+    {
+        bool freshYtDlp = false;
+        if (!YtDlp.Installed)
+        {
+            StatusText = "yt-dlp não encontrado — baixando...";
+            await InstallYtDlpAsync();
+            freshYtDlp = YtDlp.Installed;
+        }
+        if (!Ffmpeg.Installed)
+        {
+            StatusText = "ffmpeg não encontrado — baixando...";
+            await InstallFfmpegAsync(FfmpegInstallKind.Full);
+        }
+        return freshYtDlp;
+    }
+
+    /// <summary>
+    /// Orderly shutdown: remember what was still pending (before cancelling, so interrupted downloads
+    /// resume next time), stop every running job, wait briefly for their processes to die and their
+    /// job folders to be deleted, then purge whatever is left in the staging folder.
+    /// </summary>
+    public async Task ShutdownAsync()
     {
         _service.LogEmitted -= OnLogEmitted;
-        _ = _settings.SaveAsync();
+        _autoAnalyzeCts?.Cancel();
+        _analyzeCts?.Cancel();
+        _gifPreviewCts?.Cancel();
+
+        // Freeze the debounced saves: the only write from here on is the final snapshot below, taken
+        // after the cancellations so it reflects exactly what got cut off.
+        _pendingSaveCts?.Cancel();
+        _pendingFrozen = true;
+
+        // Mark what is being interrupted (both rows of each running request) and let the service keep the
+        // job folder of anything already past the download, so the processing can resume next session.
+        foreach (var row in Jobs.Where(j => _runs.ContainsKey(j.RequestId)))
+            row.InterruptedByShutdown = true;
+        _service.KeepWorkDirsOnCancel = true;
+
+        var runs = _runs.Values.ToList();   // cancelling can complete a job inline, which edits _runs
+        foreach (var run in runs)
+            run.Cts.Cancel();
+        _queueArmed = false;
+        if (runs.Count > 0)
+        {
+            var all = Task.WhenAll(runs.Select(r => r.Task));
+            try { await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(4))); } catch { /* jobs report their own faults */ }
+        }
+
+        await SavePendingJobsAsync(final: true);
+        var keep = Jobs.Where(j => j.Kind == JobKind.Download && IsShutdownPending(j))
+                       .Select(ResumableWorkDir)
+                       .Where(d => d is not null)
+                       .Select(d => d!)
+                       .ToList();
+        _service.PurgeStaging(keep);
+        await _settings.SaveAsync();
     }
 
     // ═════════════════════════ Analyze ═════════════════════════
-    private bool CanAnalyze() => !IsBusy && !IsDownloading && !string.IsNullOrWhiteSpace(Url);
+    private bool CanAnalyze() => !IsBusy && !string.IsNullOrWhiteSpace(Url);
 
     private async Task AnalyzeAsync()
     {
         var url = Url.Trim();
         _lastAnalyzedUrl = url;
         _analyzeCts = new CancellationTokenSource();
+        var cts = _analyzeCts;
         IsBusy = true;
         IsIndeterminate = true;
         StatusText = "Analisando URL...";
         try
         {
-            var info = await _service.AnalyzeUrlAsync(url, TreatAsPlaylist, _analyzeCts.Token);
+            var info = await _service.AnalyzeUrlAsync(url, TreatAsPlaylist, cts.Token);
             ApplyUrlInfo(info);
             _settings.AddRecentUrl(url, TitleOf(info));
             StatusText = "Pronto";
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Análise cancelada.";
+            if (ReferenceEquals(cts, _analyzeCts))
+                StatusText = "Análise cancelada.";
+            _lastAnalyzedUrl = null;   // let the same URL be analysed again
         }
         catch (Exception ex)
         {
             StatusText = $"Erro: {ex.Message}";
+            _lastAnalyzedUrl = null;   // a retype/Enter retries instead of being swallowed as "already analysed"
         }
         finally
         {
@@ -1005,6 +1125,7 @@ public sealed class MainViewModel : ObservableObject
         _currentPlaylistUrl = null;
         _isImportedList = false;     // a fresh analysis replaces any imported list
         _importFolder = null;
+        _importNumbered = false;
 
         switch (info)
         {
@@ -1034,6 +1155,7 @@ public sealed class MainViewModel : ObservableObject
         HasResult = true;
         OnPropertyChanged(nameof(SelectedCount));
         OnPropertyChanged(nameof(SelectedCountText));
+        OnPropertyChanged(nameof(DownloadButtonLabel));
         UpdateTemplatePreview();
         DownloadCommand.NotifyCanExecuteChanged();
     }
@@ -1066,6 +1188,7 @@ public sealed class MainViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(SelectedCount));
             OnPropertyChanged(nameof(SelectedCountText));
+            OnPropertyChanged(nameof(DownloadButtonLabel));
             DownloadCommand.NotifyCanExecuteChanged();
         }
     }
@@ -1124,153 +1247,739 @@ public sealed class MainViewModel : ObservableObject
             i.IsSelected = i.Index >= start && i.Index <= end;
     }
 
-    // ═════════════════════════ Download ═════════════════════════
+    // ═════════════════════════ Download (enqueue) ═════════════════════════
     private bool CanDownload()
-        => HasResult
-           && !IsDownloading
-           && !IsBusy
+        => !IsBusy
            && YtDlp.Installed
            && Ffmpeg.Installed
-           && (!IsPlaylist || SelectedCount > 0)
-           && !string.IsNullOrWhiteSpace(Settings.Paths.LastOutputDirectory);
+           && (HasResult
+               ? (!IsPlaylist || SelectedCount > 0) && !string.IsNullOrWhiteSpace(Settings.Paths.LastOutputDirectory)
+               : RestoredJobCount > 0);
 
-    private async Task DownloadAsync()
+    /// <summary>
+    /// "Baixar": turns the current analysis into queue jobs and starts the queue. With nothing analysed
+    /// it is the "Continuar downloads" button: it just starts the jobs restored from the previous session.
+    /// </summary>
+    private void Download()
     {
-        _downloadCts = new CancellationTokenSource();
-        IsDownloading = true;
-        IsIndeterminate = false;
-        ProgressValue = 0;
-        SpeedText = null;
-        EtaText = null;
+        if (HasResult)
+        {
+            var added = EnqueueCurrentSelection();
+            StatusText = added switch
+            {
+                0 => "Nada novo — esses itens já estão na fila.",
+                1 => "1 item adicionado à fila.",
+                _ => $"{added} itens adicionados à fila.",
+            };
+        }
+        StartQueue();
+    }
 
-        var audio = new AudioOptions(Settings.Audio.Bitrate, Settings.Audio.EmbedThumbnail, Settings.Audio.EmbedMetadata);
-        // ExtractGif/StartTime/EndTime are intentionally left out here — they only ever apply to the
-        // single-video branch below (a playlist has no single duration to trim against).
-        var video = new VideoOptions(Settings.Video.DownloadVideo, Settings.Video.IncludeAudio, Settings.Video.ExtractAudioSeparate, Speed: Settings.Video.Speed);
-        var advanced = new AdvancedOptions(
-            Settings.Advanced.Retries,
-            Settings.Advanced.TimeoutSeconds,
-            Settings.Advanced.MaxDurationMinutes is { } md ? TimeSpan.FromMinutes(md) : null,
-            Settings.Advanced.CookiesFilePath);
+    private AudioOptions BuildAudioOptions()
+        => new(Settings.Audio.Bitrate, Settings.Audio.EmbedThumbnail, Settings.Audio.EmbedMetadata,
+               Settings.Audio.EmbedMetadata ? Settings.Audio.ExcludedMetadataFields.ToArray() : null);
 
+    private AdvancedOptions BuildAdvancedOptions()
+        => new(Settings.Advanced.Retries,
+               Settings.Advanced.TimeoutSeconds,
+               Settings.Advanced.MaxDurationMinutes is { } md ? TimeSpan.FromMinutes(md) : null,
+               Settings.Advanced.CookiesFilePath);
+
+    /// <summary>The video options for a list item: no GIF/trim — those only ever apply to a single video.</summary>
+    private VideoOptions BuildListVideoOptions()
+        => new(Settings.Video.DownloadVideo, Settings.Video.IncludeAudio, Settings.Video.ExtractAudioSeparate, Speed: Settings.Video.Speed);
+
+    /// <summary>Builds one request per selected item and adds each to the queue. Returns how many were new.</summary>
+    private int EnqueueCurrentSelection()
+    {
+        var audio = BuildAudioOptions();
+        var advanced = BuildAdvancedOptions();
+        var video = BuildListVideoOptions();
         var outDir = Settings.Paths.LastOutputDirectory!;
         var template = Settings.Paths.LastTemplate;
-        var progress = new Progress<DownloadProgress>(OnDownloadProgress);
+        int added = 0;
 
+        if (_isImportedList)
+        {
+            // Imported list: every row is its own URL. Files go to the list's subfolder (the .txt name)
+            // with a flat template, optionally numbered "N - " by position in the list.
+            var dir = string.IsNullOrEmpty(_importFolder) ? outDir : Path.Combine(outDir, _importFolder);
+            foreach (var item in PlaylistItems.Where(i => i.IsSelected))
+            {
+                var tpl = _importNumbered ? OutputTemplate.PrefixFileName("%(title)s.%(ext)s", $"{item.Index} - ") : "%(title)s.%(ext)s";
+                var req = new DownloadRequest(item.WebpageUrl, dir, tpl, audio, advanced) { Video = video, SourceDuration = item.Duration };
+                if (AddJob(req, item.Title)) added++;
+            }
+        }
+        else if (IsPlaylist)
+        {
+            // Playlist: each item downloads by its own URL (no playlist re-fetch per job); the playlist
+            // tokens of the template are baked in as literals so the file names come out the same.
+            var perPlaylist = OutputTemplate.SubstituteLiteral(template, "playlist_title", PlaylistTitle ?? "Playlist");
+            foreach (var item in PlaylistItems.Where(i => i.IsSelected))
+            {
+                var tpl = OutputTemplate.SubstituteLiteral(perPlaylist, "playlist_index", item.Index.ToString(CultureInfo.InvariantCulture));
+                var req = new DownloadRequest(item.WebpageUrl, outDir, tpl, audio, advanced) { Video = video, SourceDuration = item.Duration };
+                if (AddJob(req, item.Title)) added++;
+            }
+        }
+        else if (SingleVideo is { } v)
+        {
+            var trimmedVideo = video;
+            var length = v.Duration;
+            if (CanTrim && ExtractGif)
+            {
+                var end = Math.Min(TrimStartSeconds + GifDurationSeconds, TrimMaxSeconds);
+                trimmedVideo = video with
+                {
+                    ExtractGif = true,
+                    IncludeAudio = false,       // a .gif has no audio track
+                    ExtractAudioSeparate = false,
+                    GifSpeed = Settings.Video.GifSpeed,
+                    StartTime = TimeSpan.FromSeconds(TrimStartSeconds),
+                    EndTime = TimeSpan.FromSeconds(end)
+                };
+                length = TimeSpan.FromSeconds(end - TrimStartSeconds);
+            }
+            else if (CanTrim && (TrimStartSeconds > 0 || TrimEndSeconds < TrimMaxSeconds))
+            {
+                // Only pass a trim window when it's actually a subset of the full video.
+                trimmedVideo = video with { StartTime = TimeSpan.FromSeconds(TrimStartSeconds), EndTime = TimeSpan.FromSeconds(TrimEndSeconds) };
+                length = TimeSpan.FromSeconds(TrimEndSeconds - TrimStartSeconds);
+            }
+            // A single video is not part of a playlist here: strip the playlist tokens instead of letting
+            // yt-dlp print "NA" into the path.
+            var tpl = OutputTemplate.WithoutPlaylistTokens(template);
+            var req = new DownloadRequest(v.WebpageUrl, outDir, tpl, audio, advanced) { Video = trimmedVideo, SourceDuration = length };
+            if (AddJob(req, v.Title)) added++;
+        }
+
+        return added;
+    }
+
+    // ═════════════════════════ Fila de downloads ═════════════════════════
+    // Every request is one or two rows in Jobs: the download itself and, when the video needs our ffmpeg
+    // pass, a linked "processing" row right after it. Rows of a pair share RequestId and move together.
+    // The runner starts queued downloads in list order, up to Settings.Advanced.ParallelDownloads at a
+    // time, and everything below runs on the UI thread (progress callbacks are marshalled by Progress<T>).
+
+    public ObservableCollection<DownloadJobViewModel> Jobs { get; } = [];
+
+    private readonly Dictionary<Guid, (CancellationTokenSource Cts, Task Task)> _runs = [];
+    private bool _queueArmed;   // set by "Baixar"/"Continuar"; restored jobs wait for it
+
+    /// <summary>Rows not yet finished (queued or running) — what "Ver fila (N)" and the tab header count.</summary>
+    public int PendingJobCount => Jobs.Count(j => !j.IsFinished);
+    public bool HasPendingJobs => PendingJobCount > 0;
+    public bool HasFinishedJobs => Jobs.Any(j => j.IsFinished);
+    public string QueueTabHeader => PendingJobCount > 0 ? $"Fila ({PendingJobCount})" : "Fila";
+    public string QueueButtonLabel => PendingJobCount > 0 ? $"Ver fila ({PendingJobCount})" : "Ver fila";
+
+    /// <summary>Requests restored from the previous session that haven't been started yet.</summary>
+    public int RestoredJobCount => _queueArmed ? 0 : RestoredDownloadCount + RestoredProcessingCount;
+    /// <summary>Restored requests whose download still has to run (it never finished, or the download itself was the interrupted step).</summary>
+    public int RestoredDownloadCount => _queueArmed ? 0 : Jobs.Count(j => j.Kind == JobKind.Download && j.IsRestored && j.IsQueued);
+    /// <summary>Restored requests whose download is already on disk — only the interrupted ffmpeg pass is left.</summary>
+    public int RestoredProcessingCount => _queueArmed ? 0 : Jobs.Count(j => j.Kind == JobKind.Download && j.IsRestored && j.IsResumableProcessing);
+    public bool HasRestoredJobs => RestoredJobCount > 0;
+
+    /// <summary>Banner text: says which step was interrupted, because a pending re-encode is a very different wait from a pending download.</summary>
+    public string RestoredBanner
+    {
+        get
+        {
+            var d = RestoredDownloadCount;
+            var p = RestoredProcessingCount;
+            var downloads = d == 1 ? "1 download pendente" : $"{d} downloads pendentes";
+            var processing = p == 1 ? "1 processamento pendente" : $"{p} processamentos pendentes";
+            if (p == 0) return $"{downloads} da sessão anterior.";
+            if (d == 0) return $"{processing} da sessão anterior — o download já foi feito, falta só o ffmpeg.";
+            return $"{downloads} e {processing} da sessão anterior.";
+        }
+    }
+
+    /// <summary>Label of the main button while it means "resume what the previous session left".</summary>
+    private string ContinueLabel => (RestoredDownloadCount, RestoredProcessingCount) switch
+    {
+        (> 0, 0) => $"Continuar downloads ({RestoredJobCount})",
+        (0, > 0) => $"Continuar processamento ({RestoredJobCount})",
+        _ => $"Continuar pendências ({RestoredJobCount})",
+    };
+
+    private string? _startupNotice;
+    /// <summary>Dismissable banner shown when the previous session left temp files behind.</summary>
+    public string? StartupNotice
+    {
+        get => _startupNotice;
+        set => SetProperty(ref _startupNotice, value);
+    }
+
+    /// <summary>"Manter pendências entre sessões" — mirrors the persisted setting and (un)writes the file at once.</summary>
+    public bool QueuePersistent
+    {
+        get => Settings.Ui.QueuePersistent;
+        set
+        {
+            if (Settings.Ui.QueuePersistent == value)
+                return;
+            Settings.Ui.QueuePersistent = value;   // persisted (debounced) by SettingsService
+            OnPropertyChanged();
+            SchedulePendingSave();
+        }
+    }
+
+    /// <summary>A request is pending while either of its rows is unfinished (the download row is already "Baixado" during the ffmpeg pass).</summary>
+    private static bool IsRequestPending(DownloadJobViewModel download)
+        => !download.IsFinished || download.Partner is { IsFinished: false };
+
+    /// <summary>The runner can start this request: a queued download, or a restored one whose download is done and only the ffmpeg pass is waiting.</summary>
+    private static bool IsRequestStartable(DownloadJobViewModel download)
+        => download.IsQueued || download.IsResumableProcessing;
+
+    /// <summary>
+    /// Adds a request to the queue. <paramref name="resumeWorkDir"/> is the preserved job folder of a
+    /// processing interrupted last session: the download row comes in already done and only the
+    /// processing row waits. Returns false when the same request is already pending.
+    /// </summary>
+    private bool AddJob(DownloadRequest request, string title, bool restored = false, string? resumeWorkDir = null)
+    {
+        // Same URL to the same place with the same name, still pending → not a new job.
+        if (Jobs.Any(j => j.Kind == JobKind.Download && IsRequestPending(j)
+                          && string.Equals(j.Request.Url, request.Url, StringComparison.OrdinalIgnoreCase)
+                          && string.Equals(j.Request.OutputDirectory, request.OutputDirectory, StringComparison.OrdinalIgnoreCase)
+                          && string.Equals(j.Request.OutputTemplate, request.OutputTemplate, StringComparison.Ordinal)))
+            return false;
+
+        var id = Guid.NewGuid();
+        var download = new DownloadJobViewModel(id, JobKind.Download, title, request, restored);
+        Jobs.Add(download);
+        if (request.Video.NeedsFfmpegPass)
+        {
+            var processing = new DownloadJobViewModel(id, JobKind.Processing, title, request, restored);
+            download.Partner = processing;
+            processing.Partner = download;
+            Jobs.Add(processing);
+            if (resumeWorkDir is not null)
+            {
+                download.WorkDirectory = resumeWorkDir;
+                download.MarkDone("Baixado na sessão anterior");
+                processing.StatusText = "Processamento interrompido na sessão anterior — retoma daqui, sem baixar de novo";
+            }
+        }
+        SchedulePendingSave();
+        return true;
+    }
+
+    /// <summary>Arms the runner and starts as many queued downloads as the parallelism allows.</summary>
+    private void StartQueue()
+    {
+        _queueArmed = true;
+        PumpQueue();
+    }
+
+    private void PumpQueue()
+    {
+        if (_queueArmed)
+        {
+            var maxParallel = Math.Clamp(Settings.Advanced.ParallelDownloads, 1, 10);
+            while (_runs.Count < maxParallel)
+            {
+                var next = Jobs.FirstOrDefault(j => j.Kind == JobKind.Download && IsRequestStartable(j));
+                if (next is null)
+                    break;
+                StartJob(next);
+            }
+            if (_runs.Count == 0)
+                _queueArmed = false;   // drained — the next "Baixar" arms it again
+        }
+        RefreshQueueState();
+    }
+
+    private void StartJob(DownloadJobViewModel job)
+    {
+        var cts = new CancellationTokenSource();
+        if (job.IsResumableProcessing)
+        {
+            // The download is already on disk: the processing row is the one that runs.
+            job.Partner!.MarkActive("Retomando o processamento...");
+            job.Partner.Percent = 0;
+            job.Partner.IsIndeterminate = true;
+        }
+        else
+        {
+            job.MarkActive("Iniciando...");
+            job.Percent = 0;
+            // A trimmed section is fetched by yt-dlp's ffmpeg downloader, which reports no percentage:
+            // show activity instead of a bar stuck at 0% (a real progress line switches it back).
+            job.IsIndeterminate = job.Request.Video.StartTime is not null || job.Request.Video.EndTime is not null;
+        }
+        var task = RunJobAsync(job, cts);
+        _runs[job.RequestId] = (cts, task);
+    }
+
+    private async Task RunJobAsync(DownloadJobViewModel job, CancellationTokenSource cts)
+    {
+        var progress = new Progress<DownloadProgress>(p =>
+        {
+            ApplyJobProgress(job, p);
+            RefreshQueueProgress();
+        });
         try
         {
-            if (_isImportedList)
+            var result = await _service.DownloadAsync(job.Request, progress, cts.Token);
+            if (result.Success)
             {
-                // Imported .txt: each row is a distinct URL — download the selected ones as a batch.
-                var selected = PlaylistItems.Where(i => i.IsSelected).ToList();
-                BatchTotal = selected.Count;
-                BatchCurrent = 0;
-                var urls = selected.Select(i => i.WebpageUrl).ToList();
-                var dir = string.IsNullOrEmpty(_importFolder) ? outDir : Path.Combine(outDir, _importFolder);
-                var req = new BatchDownloadRequest(urls, dir, "%(title)s.%(ext)s", audio, advanced, MaxParallel: 3) { Video = video };
-                StatusText = $"Baixando {selected.Count} itens...";
-                await _service.DownloadBatchAsync(req, new Progress<BatchProgress>(OnBatchProgress), _downloadCts.Token);
+                job.MarkDone(job.Partner is null ? "Concluído" : "Baixado");
+                job.Partner?.MarkDone();
             }
-            else if (IsPlaylist)
+            else
             {
-                var selected = PlaylistItems.Where(i => i.IsSelected).ToList();
-                BatchTotal = selected.Count;
-                BatchCurrent = 0;
-                var indices = string.Join(",", selected.Select(i => i.Index));
-                var req = new DownloadRequest(_currentPlaylistUrl!, outDir, template, audio, advanced) { PlaylistItems = indices, Video = video };
-                StatusText = $"Baixando {selected.Count} itens...";
-                await _service.DownloadAsync(req, progress, _downloadCts.Token);
-            }
-            else if (SingleVideo is { } v)
-            {
-                BatchTotal = 1;
-                BatchCurrent = 1;
-                var trimmedVideo = video;
-                if (CanTrim && ExtractGif)
+                // Once the download row is done, whatever went wrong belongs to the processing row.
+                if (job.Status == JobStatus.Done && job.Partner is { } proc)
+                    proc.MarkFailed(result.ErrorMessage);
+                else
                 {
-                    var end = Math.Min(TrimStartSeconds + GifDurationSeconds, TrimMaxSeconds);
-                    trimmedVideo = video with
-                    {
-                        ExtractGif = true,
-                        IncludeAudio = false,       // a .gif has no audio track
-                        ExtractAudioSeparate = false,
-                        GifSpeed = Settings.Video.GifSpeed,
-                        StartTime = TimeSpan.FromSeconds(TrimStartSeconds),
-                        EndTime = TimeSpan.FromSeconds(end)
-                    };
+                    job.MarkFailed(result.ErrorMessage);
+                    job.Partner?.MarkCancelled("Não executado (o download falhou)");
                 }
-                else if (CanTrim && (TrimStartSeconds > 0 || TrimEndSeconds < TrimMaxSeconds))
-                {
-                    // Only pass a trim window when it's actually a subset of the full video.
-                    trimmedVideo = video with { StartTime = TimeSpan.FromSeconds(TrimStartSeconds), EndTime = TimeSpan.FromSeconds(TrimEndSeconds) };
-                }
-                var req = new DownloadRequest(v.WebpageUrl, outDir, template, audio, advanced) { Video = trimmedVideo };
-                StatusText = "Baixando...";
-                var result = await _service.DownloadAsync(req, progress, _downloadCts.Token);
-                StatusText = result.Success ? "Concluído" : $"Falha: {result.ErrorMessage}";
             }
-
-            if (IsPlaylist)
-                StatusText = "Concluído";
-            ProgressValue = 100;
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Cancelado";
+            if (job.Status != JobStatus.Done)
+                job.MarkCancelled(job.InterruptedByShutdown ? "Download interrompido ao fechar o app" : "Cancelado");
+            if (job.Partner is { IsFinished: false } partner)
+                partner.MarkCancelled(partner.InterruptedByShutdown ? "Processamento interrompido ao fechar o app" : "Cancelado");
         }
         catch (Exception ex)
         {
-            StatusText = $"Erro: {ex.Message}";
+            if (job.Status == JobStatus.Done && job.Partner is { } proc)
+                proc.MarkFailed(ex.Message);
+            else
+            {
+                job.MarkFailed(ex.Message);
+                job.Partner?.MarkCancelled("Não executado (o download falhou)");
+            }
         }
         finally
         {
-            IsDownloading = false;
-            SpeedText = null;
-            EtaText = null;
-            ProgressValue = 0;
+            _runs.Remove(job.RequestId);
+            cts.Dispose();
+            SchedulePendingSave();
+            PumpQueue();
         }
     }
 
-    private bool CanCancel() => IsDownloading || IsBusy;
-
-    private void Cancel()
+    private void ApplyJobProgress(DownloadJobViewModel job, DownloadProgress p)
     {
-        // Cancel whichever operation is running: a download, or a URL analysis / .txt import.
-        _downloadCts?.Cancel();
-        _analyzeCts?.Cancel();
-        _autoAnalyzeCts?.Cancel();
-        _gifPreviewCts?.Cancel();
-        StatusText = "Cancelando...";
-    }
-
-    private void OnDownloadProgress(DownloadProgress p)
-    {
-        ProgressValue = p.PercentDone;
-        SpeedText = p.SpeedText;
-        EtaText = p.EtaText;
-        var stage = p.Stage switch
+        // The job folder becomes known when the ffmpeg pass starts — remember it (and persist it) so an
+        // abrupt end during the pass can resume from the downloaded file instead of downloading again.
+        if (p.WorkDirectory is not null && !string.Equals(job.WorkDirectory, p.WorkDirectory, StringComparison.OrdinalIgnoreCase))
         {
-            DownloadStage.Converting => "Convertendo MP3",
-            DownloadStage.EmbeddingMetadata => "Aplicando metadados",
-            DownloadStage.Done => "Concluído",
-            _ => "Baixando"
-        };
-        StatusText = IsBatch
-            ? $"{stage} {BatchCurrent} de {BatchTotal}"
-            : $"{stage} — {p.PercentDone:0.0}%";
+            job.WorkDirectory = p.WorkDirectory;
+            SchedulePendingSave();
+        }
+
+        switch (p.Stage)
+        {
+            case DownloadStage.Processing:
+                // yt-dlp is done; our ffmpeg pass owns the linked row from here on.
+                if (!job.IsFinished)
+                    job.MarkDone("Baixado");
+                if (job.Partner is { } proc)
+                {
+                    if (!proc.IsActive)
+                        proc.MarkActive("Processando");
+                    proc.IsIndeterminate = p.IsIndeterminate;
+                    proc.Percent = p.PercentDone;
+                    proc.StatusText = p.IsIndeterminate
+                        ? (p.Detail ?? "Processando (ffmpeg)")
+                        : $"{p.Detail ?? "Processando (ffmpeg)"} — {p.PercentDone:0}%";
+                }
+                break;
+
+            case DownloadStage.Done:
+            case DownloadStage.Failed:
+            case DownloadStage.Cancelled:
+                break;   // the final state comes from the DownloadResult / exception in RunJobAsync
+
+            default:
+                if (job.IsFinished)
+                    break;
+                job.IsIndeterminate = false;
+                job.Percent = p.PercentDone;
+                job.SpeedText = p.SpeedText;
+                job.EtaText = p.EtaText;
+                job.StatusText = p.Stage switch
+                {
+                    DownloadStage.Converting => "Convertendo MP3",
+                    DownloadStage.EmbeddingMetadata => "Aplicando metadados",
+                    _ => p.SpeedText is null
+                        ? $"Baixando — {p.PercentDone:0}%"
+                        : $"Baixando — {p.PercentDone:0}% · {p.SpeedText}{(p.EtaText is null ? "" : $" · ETA {p.EtaText}")}",
+                };
+                break;
+        }
     }
 
-    // ═════════════════════════ Import .txt queue ═════════════════════════
-    private bool CanImportQueue()
-        => !IsDownloading
-           && !IsBusy
+    /// <summary>Recomputes every aggregate the UI shows for the queue (counts, labels, status bar, taskbar).</summary>
+    private void RefreshQueueState()
+    {
+        var wasDownloading = IsDownloading;
+        IsDownloading = _runs.Count > 0;
+        RefreshQueueProgress();
+
+        if (wasDownloading && !IsDownloading)
+        {
+            var run = Jobs.Where(j => j.Kind == JobKind.Download && !j.IsSettled).ToList();
+            var ok = run.Count(j => j.Status == JobStatus.Done);
+            var failed = run.Count(j => j.Status == JobStatus.Failed);
+            StatusText = failed == 0 ? $"Fila concluída — {ok} ok." : $"Fila concluída — {ok} ok, {failed} falha(s).";
+            // Everything that finished belongs to the run that just ended — the next run's progress starts fresh.
+            foreach (var j in Jobs.Where(j => j.IsFinished))
+                j.IsSettled = true;
+        }
+
+        OnPropertyChanged(nameof(PendingJobCount));
+        OnPropertyChanged(nameof(HasPendingJobs));
+        OnPropertyChanged(nameof(HasFinishedJobs));
+        OnPropertyChanged(nameof(QueueTabHeader));
+        OnPropertyChanged(nameof(QueueButtonLabel));
+        OnPropertyChanged(nameof(RestoredJobCount));
+        OnPropertyChanged(nameof(RestoredDownloadCount));
+        OnPropertyChanged(nameof(RestoredProcessingCount));
+        OnPropertyChanged(nameof(HasRestoredJobs));
+        OnPropertyChanged(nameof(RestoredBanner));
+        OnPropertyChanged(nameof(DownloadButtonLabel));
+        DownloadCommand.NotifyCanExecuteChanged();
+        CancelCommand.NotifyCanExecuteChanged();
+        ClearFinishedJobsCommand.NotifyCanExecuteChanged();
+        CancelAllJobsCommand.NotifyCanExecuteChanged();
+        ContinuePendingCommand.NotifyCanExecuteChanged();
+        DiscardPendingCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// The cheap part, run on every progress line: overall percentage (taskbar + status bar), the
+    /// "N baixando · M processando · K na fila" summary and the lead download's speed/ETA.
+    /// </summary>
+    private void RefreshQueueProgress()
+    {
+        if (!IsDownloading)
+        {
+            ProgressValue = 0;
+            SpeedText = null;
+            EtaText = null;
+            QueueSummary = null;
+            return;
+        }
+
+        var downloads = Jobs.Where(j => j.Kind == JobKind.Download && !j.IsSettled).ToList();
+        var active = downloads.Count(j => j.IsActive);
+        var processing = Jobs.Count(j => j.IsActive && j.Kind == JobKind.Processing);
+        var queued = downloads.Count(j => j.IsQueued);
+
+        // Overall progress over this run: each request weighs the same; a pair splits its weight between its two rows.
+        double sum = 0;
+        foreach (var d in downloads)
+        {
+            var share = d.Partner is null ? 1.0 : 0.5;
+            sum += RowFraction(d) * share;
+            if (d.Partner is { } p) sum += RowFraction(p) * share;
+        }
+        ProgressValue = downloads.Count == 0 ? 0 : sum * 100.0 / downloads.Count;
+        IsIndeterminate = false;
+
+        var parts = new List<string>();
+        if (active > 0) parts.Add(active == 1 ? "1 baixando" : $"{active} baixando");
+        if (processing > 0) parts.Add(processing == 1 ? "1 processando" : $"{processing} processando");
+        if (queued > 0) parts.Add(queued == 1 ? "1 na fila" : $"{queued} na fila");
+        QueueSummary = string.Join(" · ", parts);
+
+        var lead = downloads.FirstOrDefault(j => j.IsActive);
+        SpeedText = lead?.SpeedText;
+        EtaText = lead?.EtaText;
+
+        static double RowFraction(DownloadJobViewModel j) => j.Status switch
+        {
+            JobStatus.Done => 1.0,
+            JobStatus.Active => j.IsIndeterminate ? 0.5 : Math.Clamp(j.Percent, 0, 100) / 100.0,
+            _ => 0.0,
+        };
+    }
+
+    private string? _queueSummary;
+    /// <summary>Status-bar summary of what the queue is doing right now (null when idle).</summary>
+    public string? QueueSummary
+    {
+        get => _queueSummary;
+        set => SetProperty(ref _queueSummary, value);
+    }
+
+    private bool CanCancel() => IsDownloading;
+
+    /// <summary>"Cancelar" on the main page: stops the first running item in list order (and its linked row).</summary>
+    private void CancelTopJob()
+    {
+        var top = Jobs.FirstOrDefault(j => j.IsActive);
+        if (top is null)
+            return;
+        CancelRequest(top.RequestId);
+        StatusText = $"Cancelando: {top.Title}";
+    }
+
+    private void CancelRequest(Guid requestId)
+    {
+        if (_runs.TryGetValue(requestId, out var run))
+            run.Cts.Cancel();   // RunJobAsync marks the rows; the service deletes the job's temp folder
+    }
+
+    private void CancelAllJobs()
+    {
+        _queueArmed = false;
+        // A resumable processing that never started keeps a job folder on disk — gone with the cancel.
+        var resumable = Jobs.Where(j => j.Kind == JobKind.Download && j.IsResumableProcessing).ToList();
+        foreach (var job in Jobs.Where(j => j.IsQueued).ToList())
+            job.MarkCancelled();
+        foreach (var download in resumable)
+            DropPreservedWorkDir(download);
+        foreach (var run in _runs.Values.ToList())
+            run.Cts.Cancel();
+        SchedulePendingSave();
+        RefreshQueueState();
+        StatusText = "Cancelando tudo...";
+    }
+
+    private void ClearFinishedJobs()
+    {
+        foreach (var job in Jobs.Where(j => j.IsFinished).ToList())
+            Jobs.Remove(job);
+        RefreshQueueState();
+    }
+
+    /// <summary>Row button: cancels a running request, removes a queued/finished one (both rows of the pair).</summary>
+    private void JobAction(DownloadJobViewModel? job)
+    {
+        if (job is null)
+            return;
+        if (job.IsActive || job.Partner is { IsActive: true })
+        {
+            CancelRequest(job.RequestId);
+            return;
+        }
+        RemoveRequest(job.RequestId);
+        SchedulePendingSave();
+        RefreshQueueState();
+    }
+
+    /// <summary>Takes both rows of a request out of the list, deleting a preserved job folder it never got to use.</summary>
+    private void RemoveRequest(Guid requestId)
+    {
+        foreach (var row in Jobs.Where(j => j.RequestId == requestId).ToList())
+        {
+            if (row.Kind == JobKind.Download && row.IsResumableProcessing)
+                DropPreservedWorkDir(row);
+            Jobs.Remove(row);
+        }
+    }
+
+    private void DropPreservedWorkDir(DownloadJobViewModel download)
+    {
+        var dir = download.WorkDirectory ?? download.Request.ResumeWorkDirectory;
+        download.WorkDirectory = null;
+        if (dir is not null)
+            _service.DeleteWorkDirectory(dir);
+    }
+
+    /// <summary>
+    /// "Tentar de novo" on a failed/cancelled row: the request goes back to the queue as new (both rows)
+    /// and the runner is armed. A resumable processing whose folder is gone simply downloads again — the
+    /// service falls back on its own when the folder has no video.
+    /// </summary>
+    private void RetryJob(DownloadJobViewModel? job)
+    {
+        if (job is null || job.IsRequestActive)
+            return;
+        foreach (var row in Jobs.Where(j => j.RequestId == job.RequestId))
+            row.ResetForRetry();
+        StartQueue();
+        StatusText = $"Tentando de novo: {job.Title}";
+    }
+
+    /// <summary>
+    /// Drag-and-drop reorder: moves the dragged row (with its linked row, as one block) so it lands just
+    /// before or after <paramref name="target"/>. A block never gets inserted between the two rows of
+    /// another pair — it snaps to that pair's outer edge instead.
+    /// </summary>
+    public void MoveJob(DownloadJobViewModel dragged, DownloadJobViewModel target, bool insertAfter)
+    {
+        if (ReferenceEquals(dragged, target) || dragged.RequestId == target.RequestId)
+            return;
+
+        var block = Jobs.Where(j => j.RequestId == dragged.RequestId).ToList();
+        foreach (var row in block)
+            Jobs.Remove(row);
+
+        var targetBlock = Jobs.Where(j => j.RequestId == target.RequestId).ToList();
+        var index = insertAfter
+            ? Jobs.IndexOf(targetBlock[^1]) + 1
+            : Jobs.IndexOf(targetBlock[0]);
+
+        foreach (var row in block)
+            Jobs.Insert(index++, row);
+
+        SchedulePendingSave();
+        RefreshQueueState();
+    }
+
+    private void DiscardRestoredJobs()
+    {
+        foreach (var download in Jobs.Where(j => j.Kind == JobKind.Download && j.IsRestored && IsRequestStartable(j)).ToList())
+            RemoveRequest(download.RequestId);
+        SchedulePendingSave();
+        RefreshQueueState();
+    }
+
+    /// <summary>Job folders that must survive a staging purge: the ones a not-yet-started resumable processing points at.</summary>
+    private IReadOnlyList<string> PreservedWorkDirs()
+        => Jobs.Where(j => j.Kind == JobKind.Download && j.IsResumableProcessing)
+               .Select(j => j.WorkDirectory ?? j.Request.ResumeWorkDirectory!)
+               .ToList();
+
+    // ───── Persistence: pending-downloads.txt ─────
+    private readonly string _pendingPath = PendingQueueFile.DefaultPath;
+    private CancellationTokenSource? _pendingSaveCts;
+    private bool _pendingFrozen;   // set at shutdown: only the final snapshot (after the cancellations) may write
+
+    /// <summary>Debounced rewrite of the pending file (queued + running downloads) — or its removal.</summary>
+    private void SchedulePendingSave()
+    {
+        if (_pendingFrozen)
+            return;
+        _pendingSaveCts?.Cancel();
+        _pendingSaveCts = new CancellationTokenSource();
+        var token = _pendingSaveCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(500, token); } catch (OperationCanceledException) { return; }
+            await _dispatcher.InvokeAsync(async () =>
+            {
+                if (!token.IsCancellationRequested)
+                    await SavePendingJobsAsync();
+            });
+        });
+    }
+
+    /// <summary>
+    /// Writes what still has to run. While the app is up that is every unfinished request; at shutdown
+    /// (<paramref name="final"/>) it is what the cancellations left behind: queued requests, downloads that
+    /// were cut off (they download again), and processings that were cut off — those carry the preserved
+    /// job folder so the next session skips the download.
+    /// </summary>
+    private async Task SavePendingJobsAsync(bool final = false)
+    {
+        if (_pendingFrozen && !final)
+            return;
+        try
+        {
+            if (!QueuePersistent)
+            {
+                PendingQueueFile.Delete(_pendingPath);
+                return;
+            }
+            var entries = Jobs
+                .Where(j => j.Kind == JobKind.Download && (final ? IsShutdownPending(j) : IsRequestPending(j)))
+                .Select(j => new PendingDownload(
+                    j.Request.Url, j.Title, j.Request.OutputDirectory, j.Request.OutputTemplate,
+                    j.Request.Audio, j.Request.Video, j.Request.SourceDuration?.TotalSeconds,
+                    ResumableWorkDir(j)))
+                .ToList();
+            await PendingQueueFile.SaveAsync(_pendingPath, entries);
+        }
+        catch (Exception ex)
+        {
+            _logger.Log(LogEntry.Now(LogLevel.Warning, "Core", $"Falha ao salvar {PendingQueueFile.FileName}: {ex.Message}"));
+        }
+    }
+
+    /// <summary>After the shutdown cancellations: what the next session should pick up.</summary>
+    private static bool IsShutdownPending(DownloadJobViewModel d)
+        => d.IsQueued                                                                     // never started
+           || (d.InterruptedByShutdown && d.Status == JobStatus.Cancelled)                // download cut off → downloads again
+           || (d.Status == JobStatus.Done && d.Partner is { IsQueued: true })             // restored resume, never started
+           || (d.Status == JobStatus.Done && d.Partner is { InterruptedByShutdown: true, Status: JobStatus.Cancelled });   // processing cut off → resumes
+
+    /// <summary>The job folder to resume from — only when the download is done, the pass isn't, and the folder is really there.</summary>
+    private static string? ResumableWorkDir(DownloadJobViewModel d)
+    {
+        if (d.Status != JobStatus.Done || d.Partner is null || d.Partner.Status == JobStatus.Done)
+            return null;
+        var dir = d.WorkDirectory ?? d.Request.ResumeWorkDirectory;
+        return dir is not null && Directory.Exists(dir) ? dir : null;
+    }
+
+    /// <summary>Loads the previous session's pending downloads as queued (not started) jobs.</summary>
+    private async Task LoadPendingJobsAsync()
+    {
+        IReadOnlyList<PendingDownload> entries;
+        try { entries = await PendingQueueFile.LoadAsync(_pendingPath); }
+        catch (Exception ex)
+        {
+            _logger.Log(LogEntry.Now(LogLevel.Warning, "Core", $"Falha ao ler {PendingQueueFile.FileName}: {ex.Message}"));
+            return;
+        }
+        if (entries.Count == 0)
+            return;
+
+        var advanced = BuildAdvancedOptions();
+        int resumed = 0;
+        foreach (var e in entries)
+        {
+            // A hand-added bare URL has no options of its own: use the current settings, with a flat
+            // file name (the current template may carry playlist tokens that mean nothing here).
+            var video = e.Video ?? BuildListVideoOptions();
+            // A preserved job folder means the download finished and only the ffmpeg pass is pending —
+            // but only if it is still on disk and the options still call for a pass.
+            var resumeDir = e.WorkDirectory is { Length: > 0 } wd && video.NeedsFfmpegPass && Directory.Exists(wd) ? wd : null;
+            var req = new DownloadRequest(
+                e.Url,
+                e.OutputDirectory ?? Settings.Paths.LastOutputDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.MyMusic),
+                e.OutputTemplate ?? "%(title)s.%(ext)s",
+                e.Audio ?? BuildAudioOptions(),
+                advanced)
+            {
+                Video = video,
+                SourceDuration = e.SourceDurationSeconds is { } s ? TimeSpan.FromSeconds(s) : null,
+                ResumeWorkDirectory = resumeDir,
+            };
+            var title = string.IsNullOrWhiteSpace(e.Title) ? e.Url : e.Title;
+            if (AddJob(req, title, restored: true, resumeWorkDir: resumeDir))
+            {
+                if (resumeDir is not null)
+                    resumed++;
+                else if (e.WorkDirectory is not null)
+                {
+                    // The pass was the interrupted step, but its folder is gone: be explicit about it.
+                    var row = Jobs.Last(j => j.Kind == JobKind.Download && ReferenceEquals(j.Request, req));
+                    row.StatusText = "Processamento interrompido na sessão anterior; o arquivo baixado se perdeu — vai baixar de novo";
+                }
+            }
+        }
+        RefreshQueueState();
+        _logger.Log(LogEntry.Now(LogLevel.Info, "Core",
+            $"{entries.Count} pendência(s) restaurada(s) de {PendingQueueFile.FileName}" + (resumed > 0 ? $" ({resumed} retomando só o processamento)." : ".")));
+    }
+
+    // ═════════════════════════ Import (.txt / pasted links) ═════════════════════════
+    private bool CanImport()
+        => !IsBusy
            && YtDlp.Installed
            && Ffmpeg.Installed
            && !string.IsNullOrWhiteSpace(Settings.Paths.LastOutputDirectory);
 
     /// <summary>
     /// Imports a .txt (1 URL per line) and populates the same checkbox list as a playlist would, so the
-    /// user can review/select and then press Download (which batches the selected distinct URLs). The first
+    /// user can review/select and then press Download (which queues the selected distinct URLs). The first
     /// comment line "# Download as mp3|mp4" seeds the mode (mp3 = audio only, mp4 = video+audio) and the file
     /// name becomes the output subfolder. Comment (#) and blank lines are ignored.
     /// </summary>
@@ -1300,6 +2009,24 @@ public sealed class MainViewModel : ObservableObject
         if (asVideo)
             Settings.Video.IncludeAudio = true;
 
+        await ImportUrlListAsync(urls, folder, numbered: false, listTitle: folder);
+    }
+
+    /// <summary>"Colar links": the pasted URLs become a reviewable list, straight into the output folder.</summary>
+    private async Task PasteLinksAsync()
+    {
+        if (PickPastedLinks?.Invoke() is not { } pasted || pasted.Urls.Count == 0)
+            return;
+        await ImportUrlListAsync(pasted.Urls, importFolder: null, numbered: pasted.Numbered, listTitle: "Links colados");
+    }
+
+    /// <summary>
+    /// Resolves each URL (a few in parallel, list order preserved) into the checkbox list. The download
+    /// button then queues the selected rows as individual jobs.
+    /// </summary>
+    private async Task ImportUrlListAsync(IReadOnlyList<string> urls, string? importFolder, bool numbered, string listTitle)
+    {
+        _analyzeCts?.Cancel();
         _analyzeCts = new CancellationTokenSource();
         var ct = _analyzeCts.Token;
         IsBusy = true;
@@ -1311,17 +2038,35 @@ public sealed class MainViewModel : ObservableObject
             SingleVideo = null;
             _currentPlaylistUrl = null;
             _isImportedList = true;
-            _importFolder = folder;
+            _importFolder = importFolder;
+            _importNumbered = numbered;
             IsPlaylist = true;
-            PlaylistTitle = folder;
+            PlaylistTitle = listTitle;
             PlaylistUploader = null;
 
+            int done = 0;
+            StatusText = $"Analisando 0 de {urls.Count}...";
+            using var gate = new SemaphoreSlim(3);
+            var tasks = urls.Select(async url =>
+            {
+                await gate.WaitAsync(ct);
+                try
+                {
+                    var info = await ResolveVideoInfoAsync(url, ct);
+                    var n = Interlocked.Increment(ref done);
+                    if (n < urls.Count)   // the last one is followed by the "pronta" status below — don't race it
+                        _ = _dispatcher.BeginInvoke(() => StatusText = $"Analisando {n} de {urls.Count}...");
+                    return info;
+                }
+                finally { gate.Release(); }
+            }).ToList();
+            var infos = await Task.WhenAll(tasks);
+
             int idx = 1;
-            foreach (var url in urls)
+            foreach (var raw in infos)
             {
                 ct.ThrowIfCancellationRequested();
-                StatusText = $"Analisando {idx} de {urls.Count}...";
-                var info = await ResolveVideoInfoAsync(url, ct);
+                var info = numbered ? raw with { Title = $"{idx} - {raw.Title}" } : raw;
                 var vm = new PlaylistItemViewModel(info, idx++);
                 vm.PropertyChanged += OnPlaylistItemChanged;
                 PlaylistItems.Add(vm);
@@ -1332,9 +2077,10 @@ public sealed class MainViewModel : ObservableObject
             _ = LoadAllThumbnailsAsync();
             OnPropertyChanged(nameof(SelectedCount));
             OnPropertyChanged(nameof(SelectedCountText));
+            OnPropertyChanged(nameof(DownloadButtonLabel));
             UpdateTemplatePreview();
             DownloadCommand.NotifyCanExecuteChanged();
-            StatusText = $"Lista '{folder}' pronta — {PlaylistItems.Count} itens";
+            StatusText = $"Lista '{listTitle}' pronta — {PlaylistItems.Count} itens";
         }
         catch (OperationCanceledException) { StatusText = "Importação cancelada."; }
         catch (Exception ex) { StatusText = $"Erro na importação: {ex.Message}"; }
@@ -1362,14 +2108,6 @@ public sealed class MainViewModel : ObservableObject
     }
 
     private static VideoInfo FallbackVideo(string url) => new("", url, null, null, null, url);
-
-    private void OnBatchProgress(BatchProgress b)
-    {
-        BatchTotal = b.TotalItems;
-        BatchCurrent = b.CurrentIndex;
-        ProgressValue = b.TotalItems > 0 ? (b.SuccessCount + b.FailureCount) * 100.0 / b.TotalItems : 0;
-        StatusText = $"Baixando {b.CurrentIndex} de {b.TotalItems}  ({b.SuccessCount} ok, {b.FailureCount} falhas)";
-    }
 
     /// <summary>Reads the "# Download as mp3|mp4" directive and the URL lines from an imported .txt.</summary>
     private static (bool asVideo, List<string> urls) ParseQueueFile(IEnumerable<string> lines)
@@ -1435,18 +2173,22 @@ public sealed class MainViewModel : ObservableObject
         finally { YtDlp.IsWorking = false; ProgressValue = 0; await RefreshToolsAsync(); }
     }
 
+    /// <summary>The "Instalar" button: asks which build, then installs it.</summary>
     private async Task InstallFfmpegAsync()
     {
         var kind = ChooseFfmpegKind is null ? FfmpegInstallKind.Full : await ChooseFfmpegKind();
-        if (kind is null)
-            return;
+        if (kind is not null)
+            await InstallFfmpegAsync(kind.Value);
+    }
 
+    private async Task InstallFfmpegAsync(FfmpegInstallKind kind)
+    {
         Ffmpeg.IsWorking = true;
         IsIndeterminate = false;
         try
         {
             var progress = new Progress<double>(v => { ProgressValue = v; StatusText = $"Baixando ffmpeg... {v:0}%"; });
-            await _service.DownloadFfmpegAsync(kind.Value, progress, CancellationToken.None);
+            await _service.DownloadFfmpegAsync(kind, progress, CancellationToken.None);
             StatusText = "ffmpeg instalado.";
         }
         catch (Exception ex) { StatusText = $"Erro ao instalar ffmpeg: {ex.Message}"; }
@@ -1581,11 +2323,121 @@ public sealed class MainViewModel : ObservableObject
     private void OnAdvancedSettingsChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(AdvancedSettings.ParallelDownloads))
+        {
             OnPropertyChanged(nameof(ParallelWarning));
+            PumpQueue();   // a higher limit can start more queued jobs right away
+        }
         if (e.PropertyName == nameof(AdvancedSettings.MaxDurationMinutes))
             OnPropertyChanged(nameof(MaxDurationText));
         if (e.PropertyName == nameof(AdvancedSettings.CookiesFilePath))
             OnPropertyChanged(nameof(Settings));
+    }
+
+    private void OnAudioSettingsChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // "Embutir metadados (ID3)" in the advanced options is the same switch as the preview panel's master.
+        if (e.PropertyName == nameof(AudioSettings.EmbedMetadata))
+            SyncMetadataItemsFromSettings();
+    }
+
+    // ───────────────────────── Metadados (painel de pré-visualização) ─────────────────────────
+    // The fields yt-dlp found for the previewed video, each with "include in the file" + an expander for
+    // its value. Unchecking a field adds its key to Settings.Audio.ExcludedMetadataFields (persisted, so
+    // it applies to every future download); the tri-state master mirrors Settings.Audio.EmbedMetadata.
+
+    public ObservableCollection<MetadataItemViewModel> MetadataItems { get; } = [];
+    public bool HasMetadataItems => MetadataItems.Count > 0;
+
+    private bool _syncingMetadata;
+
+    /// <summary>
+    /// Master checkbox: true = every listed field goes in, false = nothing is embedded, null = some fields
+    /// are excluded. Setting it true clears the exclusions of the listed fields; false excludes them all and
+    /// turns metadata embedding off.
+    /// </summary>
+    public bool? IncludeMetadataState
+    {
+        get
+        {
+            if (!Settings.Audio.EmbedMetadata)
+                return false;
+            if (MetadataItems.Count == 0)
+                return true;
+            var included = MetadataItems.Count(m => m.IsIncluded);
+            return included == MetadataItems.Count ? true : included == 0 ? false : null;
+        }
+        set
+        {
+            var on = value == true;
+            _syncingMetadata = true;
+            try
+            {
+                var excluded = Settings.Audio.ExcludedMetadataFields;
+                foreach (var item in MetadataItems)
+                {
+                    if (on) excluded.Remove(item.Key);
+                    else if (!excluded.Contains(item.Key)) excluded.Add(item.Key);
+                    item.SetIncludedSilently(on);
+                }
+                Settings.Audio.EmbedMetadata = on;
+            }
+            finally { _syncingMetadata = false; }
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Rebuilds the list for the video currently in the preview (single video or the selected playlist row).</summary>
+    private void RebuildMetadataItems()
+    {
+        var source = SelectedPlaylistItem?.Video.Metadata ?? SingleVideo?.Metadata;
+        MetadataItems.Clear();
+        if (source is not null)
+        {
+            var excluded = Settings.Audio.ExcludedMetadataFields;
+            foreach (var def in MetadataFields.Embeddable)
+            {
+                if (!source.TryGetValue(def.Key, out var value))
+                    continue;
+                var included = Settings.Audio.EmbedMetadata && !excluded.Contains(def.Key);
+                MetadataItems.Add(new MetadataItemViewModel(def, value, included, OnMetadataItemToggled));
+            }
+        }
+        OnPropertyChanged(nameof(HasMetadataItems));
+        OnPropertyChanged(nameof(IncludeMetadataState));
+    }
+
+    private void OnMetadataItemToggled(MetadataItemViewModel item, bool included)
+    {
+        if (_syncingMetadata)
+            return;
+        var excluded = Settings.Audio.ExcludedMetadataFields;
+        if (included)
+        {
+            excluded.Remove(item.Key);
+            if (!Settings.Audio.EmbedMetadata)
+            {
+                // Re-enabling one field turns embedding back on; every other listed field was
+                // excluded when the master went off, so only this one comes back.
+                _syncingMetadata = true;
+                try { Settings.Audio.EmbedMetadata = true; }
+                finally { _syncingMetadata = false; }
+            }
+        }
+        else if (!excluded.Contains(item.Key))
+        {
+            excluded.Add(item.Key);
+        }
+        OnPropertyChanged(nameof(IncludeMetadataState));
+    }
+
+    private void SyncMetadataItemsFromSettings()
+    {
+        if (_syncingMetadata)
+            return;
+        var excluded = Settings.Audio.ExcludedMetadataFields;
+        foreach (var item in MetadataItems)
+            item.SetIncludedSilently(Settings.Audio.EmbedMetadata && !excluded.Contains(item.Key));
+        OnPropertyChanged(nameof(IncludeMetadataState));
     }
 
     private async Task LoadPreviewThumbnailAsync(string id, string? url)
@@ -1654,20 +2506,37 @@ public sealed class MainViewModel : ObservableObject
 
     private bool FilterLogEntry(object obj) => obj is LogEntry e && e.Level >= MinLogLevel;
 
+    // ───── Logs: ring buffer + batched delivery ─────
+    // Entries arrive from process-pump threads, often in bursts (yt-dlp progress, ffmpeg -progress).
+    // They are queued and drained in one dispatcher pass at Background priority, so a burst costs one
+    // layout/render instead of one per line, and the visible list is capped at LogRingSize entries
+    // (the SessionLogger still persists everything to disk).
+    private const int LogRingSize = 1000;
+    private const int LogFlushChunk = 400;   // max entries per pass — keeps the UI responsive under a flood
+    private readonly ConcurrentQueue<LogEntry> _pendingLogs = new();
+    private int _logFlushScheduled;           // 0/1, Interlocked
+
     private void OnLogEmitted(object? sender, LogEntry e)
     {
-        var counter = YtDlpOutputParser.TryParsePlaylistCounter(e.Message);
-        _dispatcher.BeginInvoke(() =>
+        _pendingLogs.Enqueue(e);
+        if (Interlocked.CompareExchange(ref _logFlushScheduled, 1, 0) == 0)
+            _ = _dispatcher.BeginInvoke(FlushLogs, DispatcherPriority.Background);
+    }
+
+    private void FlushLogs()
+    {
+        int n = 0;
+        while (n < LogFlushChunk && _pendingLogs.TryDequeue(out var entry))
         {
-            if (counter is { } c)
-            {
-                BatchCurrent = c.Current;
-                BatchTotal = c.Total;
-            }
-            Logs.Add(e);
-            if (Logs.Count > 5000)
-                Logs.RemoveAt(0);
-        });
+            Logs.Add(entry);
+            n++;
+        }
+        while (Logs.Count > LogRingSize)
+            Logs.RemoveAt(0);
+
+        Interlocked.Exchange(ref _logFlushScheduled, 0);
+        if (!_pendingLogs.IsEmpty && Interlocked.CompareExchange(ref _logFlushScheduled, 1, 0) == 0)
+            _ = _dispatcher.BeginInvoke(FlushLogs, DispatcherPriority.Background);   // more arrived: next pass
     }
 
     private static string TitleOf(UrlInfo info) => info switch
@@ -1717,3 +2586,6 @@ public sealed record TemplatePreset(string Label, string Template);
 
 /// <summary>A building block for the advanced template editor: a friendly label + the segment it appends.</summary>
 public sealed record TokenOption(string Label, string Value);
+
+/// <summary>Result of the "Colar links" dialog: the URLs (one per line, deduped) and whether to number the files.</summary>
+public sealed record PastedLinks(IReadOnlyList<string> Urls, bool Numbered);

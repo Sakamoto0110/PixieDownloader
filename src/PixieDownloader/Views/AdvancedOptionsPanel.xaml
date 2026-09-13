@@ -110,8 +110,8 @@
             </StackPanel>
         </Border>
 
-        <!-- ── Opções avançadas ── -->
-        <Expander IsExpanded="{Binding Settings.Ui.AdvancedPanelExpanded, Mode=TwoWay}" Header="Opções avançadas" Margin="0,0,0,10">
+        <!-- ── Opções avançadas ── (the download actions live in MainWindow's sticky footer) -->
+        <Expander IsExpanded="{Binding Settings.Ui.AdvancedPanelExpanded, Mode=TwoWay}" Header="Opções avançadas" Margin="0,0,0,4">
             <Grid Margin="0,6,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -177,25 +177,5 @@
                 </StackPanel>
             </Grid>
         </Expander>
-
-        <!-- ── Download actions ── -->
-        <Border Style="{StaticResource Card}" Padding="14">
-            <DockPanel>
-                <Button DockPanel.Dock="Right" Content="Cancelar" Style="{StaticResource GhostButton}" MinWidth="100" Margin="8,0,0,0"
-                        Command="{Binding CancelCommand}"
-                        Visibility="{Binding IsCancellable, Converter={StaticResource BoolToVis}}"/>
-
-                <Button DockPanel.Dock="Right" Content="Baixar selecionados" MinWidth="180" Padding="16,9"
-                        Command="{Binding DownloadCommand}"
-                        Visibility="{Binding IsPlaylist, Converter={StaticResource BoolToVis}}"/>
-                <Button DockPanel.Dock="Right" Content="{Binding DownloadButtonLabel}" MinWidth="180" Padding="16,9"
-                        Command="{Binding DownloadCommand}"
-                        Visibility="{Binding IsPlaylist, Converter={StaticResource InverseBoolToVis}}"/>
-
-                <TextBlock VerticalAlignment="Center" Style="{StaticResource Hint}"
-                           Text="{Binding SelectedCountText}"
-                           Visibility="{Binding IsPlaylist, Converter={StaticResource BoolToVis}}"/>
-            </DockPanel>
-        </Border>
     </StackPanel>
 </UserControl>

@@ -36,6 +36,12 @@ public sealed class UiSettings : ObservableObject
 
     private bool _previewCollapsed;          // collapsed state of the preview sidebar
     public bool PreviewCollapsed { get => _previewCollapsed; set => SetProperty(ref _previewCollapsed, value); }
+
+    private bool _videoOptionsExpanded;      // "Opções avançadas de vídeo" expander (GIF, áudio, velocidade, recorte)
+    public bool VideoOptionsExpanded { get => _videoOptionsExpanded; set => SetProperty(ref _videoOptionsExpanded, value); }
+
+    private bool _queuePersistent = true;    // keep unfinished downloads in pending-downloads.txt across sessions
+    public bool QueuePersistent { get => _queuePersistent; set => SetProperty(ref _queuePersistent, value); }
 }
 
 public sealed class WindowSize : ObservableObject
@@ -69,6 +75,12 @@ public sealed class AudioSettings : ObservableObject
 
     private bool _embedMetadata = true;
     public bool EmbedMetadata { get => _embedMetadata; set => SetProperty(ref _embedMetadata, value); }
+
+    /// <summary>
+    /// Metadata fields (keys from <see cref="MetadataFields.Embeddable"/>) the user unchecked in the
+    /// preview panel — left blank in every download even though <see cref="EmbedMetadata"/> is on.
+    /// </summary>
+    public ObservableCollection<string> ExcludedMetadataFields { get; init; } = [];
 }
 
 public sealed class VideoSettings : ObservableObject

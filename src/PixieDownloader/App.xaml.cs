@@ -42,7 +42,7 @@ public partial class App : Application
         // leave those fields stuck on AppSettings' hardcoded defaults instead of the saved values.
         _settings.LoadAsync().GetAwaiter().GetResult();
 
-        _ytDlpService = new YtDlpService(_logger);
+        _ytDlpService = new YtDlpService(_logger, appVersion: AppInfo.Version);
         var viewModel = new MainViewModel(_ytDlpService, _settings, _logger);
 
         var window = new MainWindow(viewModel);

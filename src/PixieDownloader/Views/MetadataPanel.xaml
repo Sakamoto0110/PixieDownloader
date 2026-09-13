@@ -1,0 +1,132 @@
+<UserControl x:Class="PixieDownloader.Views.MetadataPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PixieDownloader.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance vm:MainViewModel}"
+             d:DesignWidth="340">
+    <!-- The metadata yt-dlp found for the previewed video. Each field: include it in the file? + an
+         expander with its value (disabled while excluded). The master is tri-state and persisted. -->
+    <StackPanel Visibility="{Binding HasMetadataItems, Converter={StaticResource BoolToVis}}">
+        <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,1,0,0" Margin="0,0,0,10"/>
+
+        <CheckBox IsThreeState="False" IsChecked="{Binding IncludeMetadataState, Mode=TwoWay}" FontWeight="SemiBold"
+                  Content="Incluir metadados:"
+                  ToolTip="Marcado: todos os campos abaixo vão pro arquivo. Desmarcado: nenhum (o mesmo que “Embutir metadados” nas opções avançadas). Meio-termo: alguns campos excluídos.">
+            <CheckBox.Style>
+                <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="CheckBox">
+                                <StackPanel Orientation="Horizontal" Background="Transparent">
+                                    <Border x:Name="box" Width="18" Height="18" CornerRadius="4"
+                                            Background="{StaticResource Brush.Bg.Elevated}"
+                                            BorderBrush="{StaticResource Brush.Border.Default}" BorderThickness="1"
+                                            VerticalAlignment="Center">
+                                        <Grid>
+                                            <Path x:Name="check" Width="11" Height="11" Stretch="Uniform"
+                                                  Data="M 0 5 L 4 9 L 11 0" Stroke="White" StrokeThickness="2"
+                                                  Visibility="Collapsed" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                            <Rectangle x:Name="dash" Width="9" Height="2.5" Fill="White" Visibility="Collapsed"/>
+                                        </Grid>
+                                    </Border>
+                                    <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="box" Property="Background" Value="{StaticResource Brush.Accent.Primary}"/>
+                                        <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource Brush.Accent.Primary}"/>
+                                        <Setter TargetName="check" Property="Visibility" Value="Visible"/>
+                                    </Trigger>
+                                    <Trigger Property="IsChecked" Value="{x:Null}">
+                                        <Setter TargetName="box" Property="Background" Value="{StaticResource Brush.Accent.Primary}"/>
+                                        <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource Brush.Accent.Primary}"/>
+                                        <Setter TargetName="dash" Property="Visibility" Value="Visible"/>
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource Brush.Accent.Hover}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </CheckBox.Style>
+        </CheckBox>
+        <TextBlock Text="O que o yt-dlp encontrou e vai embutir no arquivo (a escolha por campo fica salva)."
+                   Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="26,2,0,6"/>
+
+        <ItemsControl ItemsSource="{Binding MetadataItems}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:MetadataItemViewModel}">
+                    <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,0,0,1" Padding="0,6">
+                        <StackPanel>
+                            <DockPanel>
+                                <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsIncluded, Mode=TwoWay}" VerticalAlignment="Center"
+                                          ToolTip="Incluir este campo no arquivo final"/>
+                                <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}" IsEnabled="{Binding IsIncluded}" Margin="4,0,0,0">
+                                    <Expander.Style>
+                                        <!-- A flat, borderless variant of the themed expander for these small rows -->
+                                        <Style TargetType="Expander">
+                                            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/>
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="Expander">
+                                                        <DockPanel>
+                                                            <ToggleButton x:Name="tb" DockPanel.Dock="Top" Cursor="Hand"
+                                                                          IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                                                <ToggleButton.Template>
+                                                                    <ControlTemplate TargetType="ToggleButton">
+                                                                        <Border Background="Transparent" Padding="4,2">
+                                                                            <DockPanel>
+                                                                                <Path x:Name="arrow" DockPanel.Dock="Right" Data="M 0 0 L 4 4 L 8 0"
+                                                                                      Stroke="{StaticResource Brush.Text.Secondary}" StrokeThickness="1.5"
+                                                                                      VerticalAlignment="Center" Margin="8,0,2,0" RenderTransformOrigin="0.5,0.5"/>
+                                                                                <TextBlock Text="{Binding Label}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                                                <TextBlock Text="{Binding Preview}" Style="{StaticResource Hint}" Margin="8,0,0,0"
+                                                                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                                            </DockPanel>
+                                                                        </Border>
+                                                                        <ControlTemplate.Triggers>
+                                                                            <Trigger Property="IsChecked" Value="True">
+                                                                                <Setter TargetName="arrow" Property="RenderTransform">
+                                                                                    <Setter.Value>
+                                                                                        <RotateTransform Angle="180"/>
+                                                                                    </Setter.Value>
+                                                                                </Setter>
+                                                                            </Trigger>
+                                                                        </ControlTemplate.Triggers>
+                                                                    </ControlTemplate>
+                                                                </ToggleButton.Template>
+                                                            </ToggleButton>
+                                                            <ContentPresenter x:Name="content" DockPanel.Dock="Bottom" Margin="4,4,4,0" Visibility="Collapsed"/>
+                                                        </DockPanel>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsExpanded" Value="True">
+                                                                <Setter TargetName="content" Property="Visibility" Value="Visible"/>
+                                                            </Trigger>
+                                                            <Trigger Property="IsEnabled" Value="False">
+                                                                <Setter Property="Opacity" Value="0.45"/>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </Expander.Style>
+                                    <Border Background="{StaticResource Brush.Bg.Base}" CornerRadius="6" Padding="8,6">
+                                        <TextBox Text="{Binding Value, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0"
+                                                 Background="Transparent" Padding="0" FontSize="12" MaxHeight="220"
+                                                 VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"/>
+                                    </Border>
+                                </Expander>
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </StackPanel>
+</UserControl>

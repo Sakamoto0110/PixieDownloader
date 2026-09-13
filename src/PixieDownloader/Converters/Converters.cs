@@ -72,6 +72,7 @@ public sealed class StageToTextConverter : IValueConverter
         DownloadStage.Downloading => "Baixando",
         DownloadStage.Converting => "Convertendo MP3",
         DownloadStage.EmbeddingMetadata => "Aplicando metadados",
+        DownloadStage.Processing => "Processando (ffmpeg)",
         DownloadStage.Done => "Concluído",
         DownloadStage.Failed => "Falhou",
         DownloadStage.Cancelled => "Cancelado",

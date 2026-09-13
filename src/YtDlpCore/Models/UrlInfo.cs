@@ -22,7 +22,15 @@ public record VideoInfo(
     string? Uploader,
     TimeSpan? Duration,
     string? ThumbnailUrl,
-    string WebpageUrl);
+    string WebpageUrl)
+{
+    /// <summary>
+    /// The embeddable metadata yt-dlp found for this video, keyed by <see cref="MetadataFieldDef.Key"/>
+    /// (see <see cref="MetadataFields.Embeddable"/>). Only fields that actually had a value are present;
+    /// a flat playlist entry typically carries just title/uploader/url.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Metadata { get; init; } = MetadataFields.Empty;
+}
 
 public record PlaylistInfo(
     string Id,

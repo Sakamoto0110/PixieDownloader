@@ -9,7 +9,7 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance vm:MainViewModel}"
-        Title="PixieDownloader" Height="800" Width="1280" MinHeight="560" MinWidth="940"
+        Title="PixieDownloader" Height="800" Width="1280" MinHeight="420" MinWidth="620"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" ResizeMode="CanResize" AllowsTransparency="False"
         Background="{StaticResource Brush.Bg.Base}"
@@ -20,7 +20,16 @@
         <shell:WindowChrome CaptionHeight="48" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
     </shell:WindowChrome.WindowChrome>
 
-    <Grid>
+    <!-- Overall queue progress on the taskbar button -->
+    <Window.TaskbarItemInfo>
+        <shell:TaskbarItemInfo ProgressValue="{Binding TaskbarProgress}" ProgressState="{Binding TaskbarState}"/>
+    </Window.TaskbarItemInfo>
+
+    <!-- Below the design size (940x560) the whole content is scaled down instead of clipping; see MainWindow.UpdateScale. -->
+    <Grid x:Name="Root">
+        <Grid.LayoutTransform>
+            <ScaleTransform x:Name="RootScale" ScaleX="1" ScaleY="1"/>
+        </Grid.LayoutTransform>
         <Grid.RowDefinitions>
             <RowDefinition Height="48"/>
             <RowDefinition Height="*"/>
@@ -46,6 +55,17 @@
                         </Grid>
                     </Border>
                     <TextBlock Text="PixieDownloader" FontWeight="SemiBold" FontSize="15" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    <!-- Hit-test visible in the chrome, otherwise the caption area swallows the hover and the tooltip never shows -->
+                    <Border Background="{StaticResource Brush.Bg.Elevated}" CornerRadius="5" Padding="6,1" Margin="8,1,0,0" VerticalAlignment="Center"
+                            ToolTip="{x:Static local:AppInfo.VersionDetail}" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <TextBlock Text="{x:Static local:AppInfo.VersionLabel}" Style="{StaticResource Hint}" FontSize="11"/>
+                    </Border>
+                    <!-- Source on GitHub: the octicon mark, hand cursor, tooltip = the repo URL, click opens it -->
+                    <Button Style="{StaticResource IconButton}" Margin="4,1,0,0" VerticalAlignment="Center" Click="OnOpenRepository"
+                            ToolTip="{x:Static local:AppInfo.RepositoryUrl}" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Path Width="16" Height="16" Stretch="Uniform" Fill="{StaticResource Brush.Text.Secondary}"
+                              Data="M 8 0 C 3.58 0 0 3.58 0 8 c 0 3.54 2.29 6.53 5.47 7.59 .4 .07 .55 -.17 .55 -.38 0 -.19 -.01 -.82 -.01 -1.49 -2.01 .37 -2.53 -.49 -2.69 -.94 -.09 -.23 -.48 -.94 -.82 -1.13 -.28 -.15 -.68 -.52 -.01 -.53 .63 -.01 1.08 .58 1.23 .82 .72 1.21 1.87 .87 2.33 .66 .07 -.52 .28 -.87 .51 -1.07 -1.78 -.2 -3.64 -.89 -3.64 -3.95 0 -.87 .31 -1.59 .82 -2.15 -.08 -.2 -.36 -1.02 .08 -2.12 0 0 .67 -.21 2.2 .82 .64 -.18 1.32 -.27 2 -.27 .68 0 1.36 .09 2 .27 1.53 -1.04 2.2 -.82 2.2 -.82 .44 1.1 .16 1.92 .08 2.12 .51 .56 .82 1.27 .82 2.15 0 3.07 -1.87 3.75 -3.65 3.95 .29 .25 .54 .73 .54 1.48 0 1.07 -.01 1.93 -.01 2.2 0 .21 .15 .46 .55 .38 A 8.013 8.013 0 0 0 16 8 c 0 -4.42 -3.58 -8 -8 -8 z"/>
+                    </Button>
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"
@@ -78,29 +98,89 @@
         </Border>
 
         <!-- ═══════════ Tabs ═══════════ -->
-        <TabControl Grid.Row="1" Margin="16,12,16,0">
+        <TabControl Grid.Row="1" Margin="16,12,16,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
             <TabItem Header="Baixar">
                 <Grid Margin="0,4,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="{Binding PreviewColumnWidth}"/>
                     </Grid.ColumnDefinitions>
 
+                    <!-- ── Notices (previous session) ── -->
+                    <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
+                        <Border Background="{StaticResource Brush.Accent.Subtle}" BorderBrush="{StaticResource Brush.Warning}" BorderThickness="1"
+                                CornerRadius="8" Padding="12,8" Margin="0,0,0,10"
+                                Visibility="{Binding StartupNotice, Converter={StaticResource NotNullToVis}}">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="OK" Style="{StaticResource GhostButton}" Padding="10,4" Margin="12,0,0,0"
+                                        VerticalAlignment="Center" Command="{Binding DismissNoticeCommand}"/>
+                                <TextBlock Text="⚠" Foreground="{StaticResource Brush.Warning}" FontSize="15" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding StartupNotice}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                            </DockPanel>
+                        </Border>
+                        <Border Background="{StaticResource Brush.Accent.Subtle}" BorderBrush="{StaticResource Brush.Accent.Primary}" BorderThickness="1"
+                                CornerRadius="8" Padding="12,8" Margin="0,0,0,10"
+                                Visibility="{Binding HasRestoredJobs, Converter={StaticResource BoolToVis}}">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
+                                    <Button Content="Descartar" Style="{StaticResource GhostButton}" Padding="10,4" Command="{Binding DiscardPendingCommand}"/>
+                                    <Button Content="Continuar" Padding="12,4" Margin="6,0,0,0" Command="{Binding ContinuePendingCommand}"/>
+                                    <Button Content="Ver fila" Style="{StaticResource GhostButton}" Padding="10,4" Margin="6,0,0,0" Command="{Binding ShowQueueCommand}"/>
+                                </StackPanel>
+                                <TextBlock Text="⏳" FontSize="15" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding RestoredBanner}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                            </DockPanel>
+                        </Border>
+                    </StackPanel>
+
                     <!-- ── Main column (scrollable) ── -->
-                    <ScrollViewer Grid.Column="0" Margin="0,0,12,0" VerticalScrollBarVisibility="Auto"
+                    <ScrollViewer Grid.Row="1" Grid.Column="0" Margin="0,0,12,0" VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
                         <StackPanel>
                             <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,10">
                                 <StackPanel>
                                     <DockPanel>
-                                        <Button DockPanel.Dock="Right" Content="Analisar" Command="{Binding AnalyzeCommand}"
-                                                MinWidth="100" Margin="10,0,0,0"/>
-                                        <Button DockPanel.Dock="Right" Content="Importar .txt" Command="{Binding ImportQueueCommand}"
-                                                Style="{StaticResource GhostButton}" Padding="10,5" Margin="10,0,0,0"
-                                                ToolTip="Importa um .txt (1 URL por linha) e mostra como lista com checkboxes — baixa ao clicar em Baixar.&#10;1ª linha: &quot;# Download as mp3&quot; (só áudio) ou &quot;# Download as mp4&quot; (vídeo+áudio).&#10;O nome do arquivo vira a subpasta de saída."/>
+                                        <!-- "Importar ▾": .txt file, or paste links into a dialog -->
+                                        <Grid DockPanel.Dock="Right" Margin="10,0,0,0">
+                                            <ToggleButton x:Name="ImportToggle" Style="{StaticResource GhostToggleButton}" Padding="10,5"
+                                                          ToolTip="Importa uma lista de URLs pra revisar e baixar em lote">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="Importar"/>
+                                                    <Path Data="M 0 0 L 4 4 L 8 0" Stroke="{StaticResource Brush.Text.Secondary}" StrokeThickness="1.5"
+                                                          VerticalAlignment="Center" Margin="8,1,0,0"/>
+                                                </StackPanel>
+                                            </ToggleButton>
+                                            <Popup IsOpen="{Binding IsChecked, ElementName=ImportToggle, Mode=TwoWay}" StaysOpen="False"
+                                                   PlacementTarget="{Binding ElementName=ImportToggle}" Placement="Bottom"
+                                                   AllowsTransparency="True" PopupAnimation="Fade">
+                                                <Border Background="{StaticResource Brush.Bg.Surface}" BorderBrush="{StaticResource Brush.Border.Default}"
+                                                        BorderThickness="1" CornerRadius="6" Margin="0,4,0,0" Padding="6" MinWidth="220">
+                                                    <StackPanel>
+                                                        <Button Style="{StaticResource MenuButton}" Click="OnImportMenuClick" Command="{Binding ImportQueueCommand}"
+                                                                ToolTip="Um .txt com 1 URL por linha. 1ª linha: &quot;# Download as mp3&quot; (só áudio) ou &quot;# Download as mp4&quot; (vídeo+áudio).&#10;O nome do arquivo vira a subpasta de saída.">
+                                                            <StackPanel>
+                                                                <TextBlock Text="De um arquivo .txt…"/>
+                                                                <TextBlock Text="1 URL por linha; o nome do arquivo vira subpasta" Style="{StaticResource Hint}"/>
+                                                            </StackPanel>
+                                                        </Button>
+                                                        <Button Style="{StaticResource MenuButton}" Click="OnImportMenuClick" Command="{Binding PasteLinksCommand}">
+                                                            <StackPanel>
+                                                                <TextBlock Text="Colar links…"/>
+                                                                <TextBlock Text="Cole várias URLs numa janela" Style="{StaticResource Hint}"/>
+                                                            </StackPanel>
+                                                        </Button>
+                                                    </StackPanel>
+                                                </Border>
+                                            </Popup>
+                                        </Grid>
                                         <TextBox VerticalContentAlignment="Center"
                                                  Text="{Binding Url, UpdateSourceTrigger=PropertyChanged}"
-                                                 ToolTip="Cole uma URL de vídeo ou playlist do YouTube">
+                                                 ToolTip="Cole uma URL de vídeo ou playlist — a análise começa sozinha. Enter analisa de novo.">
                                             <TextBox.InputBindings>
                                                 <KeyBinding Key="Return" Command="{Binding AnalyzeCommand}"/>
                                             </TextBox.InputBindings>
@@ -114,10 +194,12 @@
                                                   IsChecked="{Binding TreatAsPlaylist, Mode=TwoWay}"/>
                                     </DockPanel>
 
-                                    <!-- Video options — revealed when "Baixar vídeo" is checked -->
-                                    <StackPanel Visibility="{Binding DownloadVideo, Converter={StaticResource BoolToVis}}">
-                                        <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,1,0,0" Margin="0,12,0,0"/>
-                                        <CheckBox Content="Extrair GIF" Margin="0,12,0,0"
+                                    <!-- Video options — an expander, revealed when "Baixar vídeo" is checked -->
+                                    <Expander Header="Opções avançadas de vídeo" Margin="0,12,0,0"
+                                              IsExpanded="{Binding Settings.Ui.VideoOptionsExpanded, Mode=TwoWay}"
+                                              Visibility="{Binding DownloadVideo, Converter={StaticResource BoolToVis}}">
+                                    <StackPanel Margin="0,4,0,0">
+                                        <CheckBox Content="Extrair GIF"
                                                   IsChecked="{Binding ExtractGif, Mode=TwoWay}"
                                                   ToolTip="Extrai só o trecho selecionado abaixo como um .gif animado (sem áudio), em vez do vídeo inteiro"/>
 
@@ -208,6 +290,7 @@
                                                        Style="{StaticResource Hint}" Margin="0,4,0,0" TextWrapping="Wrap"/>
                                         </StackPanel>
                                     </StackPanel>
+                                    </Expander>
                                 </StackPanel>
                             </Border>
 
@@ -215,10 +298,10 @@
                                 <Border Style="{StaticResource Card}" MinHeight="84" Padding="12,14" VerticalAlignment="Top"
                                         Visibility="{Binding HasResult, Converter={StaticResource InverseBoolToVis}}">
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                        <TextBlock Text="Cole uma URL e clique em Analisar" Style="{StaticResource SectionTitle}"
+                                        <TextBlock Text="Cole uma URL acima" Style="{StaticResource SectionTitle}"
                                                    HorizontalAlignment="Center"/>
-                                        <TextBlock Text="Vídeos e playlists do YouTube e demais sites suportados pelo yt-dlp"
-                                                   Style="{StaticResource Hint}" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="Vídeos e playlists do YouTube e demais sites suportados pelo yt-dlp — a análise começa sozinha"
+                                                   Style="{StaticResource Hint}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
                                     </StackPanel>
                                 </Border>
 
@@ -249,8 +332,25 @@
                         </StackPanel>
                     </ScrollViewer>
 
-                    <!-- ── Sidebar: preview (collapsible) ── -->
-                    <Border Grid.Column="1" Style="{StaticResource Card}" Padding="0">
+                    <!-- ── Sticky footer: the actions never scroll away ── -->
+                    <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource Card}" Padding="12,10" Margin="0,10,12,0">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="{Binding DownloadButtonLabel}" MinWidth="180" Padding="16,9"
+                                    Command="{Binding DownloadCommand}"
+                                    ToolTip="Adiciona à fila e começa a baixar (a fila continua enquanto você analisa outras URLs)"/>
+                            <Button DockPanel.Dock="Right" Content="Cancelar" Style="{StaticResource GhostButton}" MinWidth="100" Margin="0,0,8,0"
+                                    Command="{Binding CancelCommand}"
+                                    ToolTip="Interrompe o primeiro item em andamento da fila e apaga seus arquivos temporários"/>
+                            <Button DockPanel.Dock="Right" Content="{Binding QueueButtonLabel}" Style="{StaticResource GhostButton}" MinWidth="100" Margin="0,0,8,0"
+                                    Command="{Binding ShowQueueCommand}"/>
+                            <TextBlock VerticalAlignment="Center" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis"
+                                       Text="{Binding SelectedCountText}"
+                                       Visibility="{Binding IsPlaylist, Converter={StaticResource BoolToVis}}"/>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- ── Sidebar: preview + metadata (collapsible) ── -->
+                    <Border Grid.Row="0" Grid.RowSpan="3" Grid.Column="1" Style="{StaticResource Card}" Padding="0">
                         <Grid>
                             <!-- Collapsed rail -->
                             <Button Style="{StaticResource GhostButton}" Padding="4" Margin="4"
@@ -271,31 +371,41 @@
                                     <TextBlock Text="Pré-visualização" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
                                 </DockPanel>
 
-                                <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0"
-                                            Visibility="{Binding SelectedPlaylistItem, Converter={StaticResource NotNullToVis}}">
-                                    <TextBlock Text="{Binding SelectedPlaylistItem.Title}" TextWrapping="Wrap" FontWeight="SemiBold"/>
-                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                        <TextBlock Text="{Binding SelectedPlaylistItem.Uploader}" Style="{StaticResource Hint}"/>
-                                        <TextBlock Text="  •  " Style="{StaticResource Hint}"/>
-                                        <TextBlock Text="{Binding SelectedPlaylistItem.Duration, Converter={StaticResource Duration}}" Style="{StaticResource Hint}"/>
-                                    </StackPanel>
-                                </StackPanel>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                    <StackPanel>
+                                        <Border CornerRadius="8" ClipToBounds="True" Background="#000000" MinHeight="200" VerticalAlignment="Top"
+                                                Cursor="Hand" ToolTip="{Binding PreviewUrl}">
+                                            <Border.InputBindings>
+                                                <MouseBinding MouseAction="LeftClick" Command="{Binding OpenPreviewCommand}"/>
+                                            </Border.InputBindings>
+                                            <Grid>
+                                                <Image Source="{Binding PreviewThumbnailPath, Converter={StaticResource PathToImage}}" Stretch="Uniform"/>
+                                                <TextBlock Text="(sem prévia)" Style="{StaticResource Hint}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                           Visibility="{Binding PreviewThumbnailPath, Converter={StaticResource NullToVis}}"/>
+                                            </Grid>
+                                        </Border>
 
-                                <Border CornerRadius="8" ClipToBounds="True" Background="#000000" MinHeight="200" VerticalAlignment="Top"
-                                        Cursor="Hand" ToolTip="{Binding PreviewUrl}">
-                                    <Border.InputBindings>
-                                        <MouseBinding MouseAction="LeftClick" Command="{Binding OpenPreviewCommand}"/>
-                                    </Border.InputBindings>
-                                    <Grid>
-                                        <Image Source="{Binding PreviewThumbnailPath, Converter={StaticResource PathToImage}}" Stretch="Uniform"/>
-                                        <TextBlock Text="(sem prévia)" Style="{StaticResource Hint}" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   Visibility="{Binding PreviewThumbnailPath, Converter={StaticResource NullToVis}}"/>
-                                    </Grid>
-                                </Border>
+                                        <StackPanel Margin="0,12,0,0"
+                                                    Visibility="{Binding SelectedPlaylistItem, Converter={StaticResource NotNullToVis}}">
+                                            <TextBlock Text="{Binding SelectedPlaylistItem.Title}" TextWrapping="Wrap" FontWeight="SemiBold"/>
+                                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                <TextBlock Text="{Binding SelectedPlaylistItem.Uploader}" Style="{StaticResource Hint}"/>
+                                                <TextBlock Text="  •  " Style="{StaticResource Hint}"/>
+                                                <TextBlock Text="{Binding SelectedPlaylistItem.Duration, Converter={StaticResource Duration}}" Style="{StaticResource Hint}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+
+                                        <views:MetadataPanel Margin="0,14,0,0"/>
+                                    </StackPanel>
+                                </ScrollViewer>
                             </DockPanel>
                         </Grid>
                     </Border>
                 </Grid>
+            </TabItem>
+
+            <TabItem Header="{Binding QueueTabHeader}">
+                <views:QueuePanel Margin="0,4,0,0"/>
             </TabItem>
 
             <TabItem Header="Debug / Tests">
@@ -326,6 +436,10 @@
                              Visibility="{Binding ShowProgress, Converter={StaticResource BoolToVis}}"/>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="{Binding QueueSummary}" Style="{StaticResource Hint}"
+                               Visibility="{Binding QueueSummary, Converter={StaticResource NotNullToVis}}"/>
+                    <TextBlock Text="  •  " Style="{StaticResource Hint}"
+                               Visibility="{Binding SpeedText, Converter={StaticResource NotNullToVis}}"/>
                     <TextBlock Text="{Binding SpeedText}" Style="{StaticResource Hint}"
                                Visibility="{Binding SpeedText, Converter={StaticResource NotNullToVis}}"/>
                     <TextBlock Text="  •  ETA " Style="{StaticResource Hint}"

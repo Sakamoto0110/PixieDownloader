@@ -20,11 +20,15 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
     public event EventHandler<LogEntry>? LogEmitted;
 
-    public YtDlpService(SessionLogger? logger = null, string? toolsDirectory = null, string? cacheDirectory = null)
+    /// <param name="appVersion">
+    /// Version sent in the User-Agent of our own HTTP calls (thumbnails, tool downloads, update check) —
+    /// the app passes its assembly version; a caller that passes nothing gets "dev".
+    /// </param>
+    public YtDlpService(SessionLogger? logger = null, string? toolsDirectory = null, string? cacheDirectory = null, string? appVersion = null)
     {
         _logger = logger;
         _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("PixieDownloader/1.0");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd($"PixieDownloader/{(string.IsNullOrWhiteSpace(appVersion) ? "dev" : appVersion.Trim())}");
 
         _runner = new YtDlpProcessRunner();
         _binaries = new BinaryManager(_http, _runner, EmitEntry, toolsDirectory);
@@ -89,15 +93,25 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         Directory.CreateDirectory(request.OutputDirectory);
         PrepareStagingDir();
 
-        // When the video needs an ffmpeg pass, download into a private work folder first (see below).
+        // Every download gets its own private folder inside the hidden staging dir: yt-dlp's temp files
+        // live there, and when the video needs an ffmpeg pass the whole download lands there first (see
+        // below). Cancelling or crashing can then never leave anything behind that isn't scoped to one
+        // job, and the folder is deleted whole in the finally — unless the session is ending mid-pass and
+        // KeepWorkDirsOnCancel asks for it to survive so the pass can be resumed next time.
         var needPass = VideoNeedsFfmpegPass(request.Video);
-        string? workDir = needPass ? Path.Combine(GetStagingDir(), "proc-" + Guid.NewGuid().ToString("N")) : null;
-        if (workDir is not null)
-            Directory.CreateDirectory(workDir);
+        var resuming = needPass && request.ResumeWorkDirectory is { } resumeDir && HasDownloadedVideo(resumeDir);
+        if (request.ResumeWorkDirectory is not null && !resuming)
+            Emit(LogLevel.Warning, "Core", "A pasta do processamento interrompido não existe mais (ou está vazia) — baixando de novo.", request.Url);
+
+        var jobDir = resuming ? request.ResumeWorkDirectory! : Path.Combine(GetStagingDir(), "job-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(jobDir);
+        string? workDir = needPass ? jobDir : null;
+        bool reachedProcessing = false;
+        bool keepJobDir = false;
 
         var sw = Stopwatch.StartNew();
-        var args = BuildDownloadArgs(request, workDir);
-        Emit(LogLevel.Info, "Core", $"Download iniciado: {request.Url}", request.Url);
+        var args = BuildDownloadArgs(request, jobDir, workDir);
+        Emit(LogLevel.Info, "Core", resuming ? $"Retomando processamento (download já feito): {request.Url}" : $"Download iniciado: {request.Url}", request.Url);
 
         var currentTitle = request.Url;
         var stage = DownloadStage.Downloading;
@@ -141,14 +155,21 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
         try
         {
-            int code = await _runner.RunAsync(ytDlp, args, OnStdout, OnStderr, request.OutputDirectory, ct).ConfigureAwait(false);
+            int code = 0;
+            if (resuming)
+                CleanPartialOutputs(jobDir);   // a half-written .pixie.mp4/.gif from the interrupted pass must not be mistaken for a source
+            else
+                code = await _runner.RunAsync(ytDlp, args, OnStdout, OnStderr, request.OutputDirectory, ct).ConfigureAwait(false);
             sw.Stop();
 
             if (code == 0)
             {
                 // ffmpeg pass + deliver: locate the real files in the work folder, process, move to output.
                 if (workDir is not null)
+                {
+                    reachedProcessing = true;
                     destPath = await PostProcessAndDeliverAsync(workDir, request, progress, currentTitle, ct).ConfigureAwait(false) ?? destPath;
+                }
 
                 progress?.Report(new DownloadProgress(currentTitle, 100, null, null, DownloadStage.Done));
                 Emit(LogLevel.Info, "Core", $"Concluído: {destPath ?? request.Url}", request.Url);
@@ -163,8 +184,11 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         catch (OperationCanceledException)
         {
             sw.Stop();
-            progress?.Report(new DownloadProgress(currentTitle, lastPercent, null, null, DownloadStage.Cancelled));
-            Emit(LogLevel.Warning, "Core", "Download cancelado.", request.Url);
+            keepJobDir = reachedProcessing && KeepWorkDirsOnCancel;
+            progress?.Report(new DownloadProgress(currentTitle, lastPercent, null, null, DownloadStage.Cancelled) { WorkDirectory = keepJobDir ? jobDir : null });
+            Emit(LogLevel.Warning, "Core", keepJobDir
+                ? $"Processamento interrompido — o download fica guardado em {Path.GetFileName(jobDir)} pra retomar na próxima sessão."
+                : "Download cancelado.", request.Url);
             throw;
         }
         catch (Exception ex)
@@ -175,12 +199,72 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         }
         finally
         {
-            if (workDir is not null)
+            if (!keepJobDir)
+                await DeleteJobDirAsync(jobDir).ConfigureAwait(false);
+        }
+    }
+
+    public bool KeepWorkDirsOnCancel { get; set; }
+
+    /// <summary>A job folder can be resumed when it still holds a downloaded video (not one of our own intermediates).</summary>
+    private static bool HasDownloadedVideo(string dir)
+    {
+        try
+        {
+            return Directory.Exists(dir) && Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+                .Any(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !IsIntermediate(f));
+        }
+        catch { return false; }
+    }
+
+    private static bool IsIntermediate(string file)
+    {
+        var name = Path.GetFileName(file);
+        return name.EndsWith(".pixie.mp4", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".speed.mp4", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("palette.png", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".ytdl", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Before resuming a pass: drops whatever the interrupted pass was writing (our intermediates, a
+    /// partial .gif/.mp3) so only the downloaded source is left for <see cref="PostProcessAndDeliverAsync"/>.
+    /// </summary>
+    private void CleanPartialOutputs(string dir)
+    {
+        foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).ToList())
+        {
+            var ext = Path.GetExtension(f).ToLowerInvariant();
+            if (IsIntermediate(f) || ext is ".gif" or ".mp3")
             {
-                try { if (Directory.Exists(workDir)) Directory.Delete(workDir, recursive: true); }
-                catch { /* best-effort cleanup of the work folder */ }
+                try { File.Delete(f); }
+                catch (Exception ex) { Emit(LogLevel.Warning, "Core", $"Não consegui apagar o resíduo {Path.GetFileName(f)}: {ex.Message}"); }
             }
         }
+    }
+
+    /// <summary>
+    /// Removes a job's staging folder. A process killed on cancel can hold its file handles for a
+    /// moment after the pipes close, so a failed delete is retried a few times before giving up.
+    /// </summary>
+    private async Task DeleteJobDirAsync(string jobDir)
+    {
+        for (int attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(jobDir))
+                    return;
+                Directory.Delete(jobDir, recursive: true);
+                return;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            await Task.Delay(200).ConfigureAwait(false);
+        }
+        Emit(LogLevel.Warning, "Core", $"Não consegui apagar a pasta temporária {Path.GetFileName(jobDir)} — será limpa na próxima abertura.");
     }
 
     private static readonly string[] VideoExtensions = [".mp4", ".mkv", ".webm", ".mov"];
@@ -200,11 +284,34 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         var ffmpeg = _binaries.ResolveFfmpegPath();
         var v = request.Video;
         var bitrate = request.Audio.Bitrate.ToUpperInvariant().Trim();
-        progress?.Report(new DownloadProgress(title, 0, null, null, DownloadStage.Converting));
-        void OnLine(string l) => Emit(LogLevel.Debug, "ffmpeg", l, request.Url);
+        void OnErr(string l) => Emit(LogLevel.Debug, "ffmpeg", l, request.Url);
+
+        // Progress for the pass: each ffmpeg step owns a slice of 0..100 and reports its own position
+        // (from -progress out_time) against the expected output length. Without a duration hint the
+        // stage is reported as indeterminate — the UI shows the step label but no percentage.
+        var source = request.SourceDuration;
+        double sliceStart = 0, sliceWeight = 100;
+        string? detail = null;
+        void ReportStep(string label, double start, double weight)
+        {
+            detail = label; sliceStart = start; sliceWeight = weight;
+            progress?.Report(new DownloadProgress(title, start, null, null, DownloadStage.Processing) { IsIndeterminate = source is null, Detail = label, WorkDirectory = workDir });
+        }
+        Action<string> ProgressFor(TimeSpan? expected) => line =>
+        {
+            if (expected is not { } total || total <= TimeSpan.Zero)
+                return;
+            if (YtDlpOutputParser.TryParseFfmpegOutTime(line) is not { } pos)
+                return;
+            var fraction = Math.Clamp(pos.TotalSeconds / total.TotalSeconds, 0, 1);
+            progress?.Report(new DownloadProgress(title, sliceStart + sliceWeight * fraction, null, null, DownloadStage.Processing) { Detail = detail, WorkDirectory = workDir });
+        };
+        TimeSpan? Scaled(double speed) => source is { } d ? d / Math.Clamp(speed, 0.1, 8.0) : null;
+
+        progress?.Report(new DownloadProgress(title, 0, null, null, DownloadStage.Processing) { IsIndeterminate = source is null, WorkDirectory = workDir });
 
         var videos = Directory.EnumerateFiles(workDir, "*", SearchOption.AllDirectories)
-            .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            .Where(f => VideoExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !IsIntermediate(f))
             .ToList();
 
         if (ffmpeg is null)
@@ -220,11 +327,14 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
                 // the whole 0.25x..1.0x range; the gif has no audio track to worry about at all.
                 var gifSource = src;
                 string? speedTemp = null;
-                if (SpeedChanged(v.GifSpeed))
+                var slowed = SpeedChanged(v.GifSpeed);
+                var gifLength = slowed ? Scaled(v.GifSpeed) : source;
+                if (slowed)
                 {
                     speedTemp = Path.Combine(Path.GetDirectoryName(src)!, Path.GetFileNameWithoutExtension(src) + ".speed.mp4");
                     Emit(LogLevel.Info, "Core", $"Ajustando velocidade do GIF ({Math.Clamp(v.GifSpeed, 0.1, 8.0):0.##}x)...", request.Url);
-                    var speedCode = await _runner.RunAsync(ffmpeg, BuildSpeedPassArgs(src, speedTemp, v.GifSpeed, includeAudio: false, audioBitrate: ""), OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+                    ReportStep("Ajustando velocidade do GIF", 0, 40);
+                    var speedCode = await _runner.RunAsync(ffmpeg, WithProgress(BuildSpeedPassArgs(src, speedTemp, v.GifSpeed, includeAudio: false, audioBitrate: "")), ProgressFor(gifLength), OnErr, workDir, ct).ConfigureAwait(false);
                     if (speedCode == 0 && File.Exists(speedTemp))
                         gifSource = speedTemp;
                     else
@@ -235,12 +345,14 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
                 var outGif = Path.ChangeExtension(src, ".gif");
 
                 Emit(LogLevel.Info, "Core", "Gerando paleta de cores do GIF...", request.Url);
-                var paletteCode = await _runner.RunAsync(ffmpeg, BuildGifPaletteArgs(gifSource, palette), OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+                ReportStep("Gerando paleta do GIF", slowed ? 40 : 0, slowed ? 30 : 50);
+                var paletteCode = await _runner.RunAsync(ffmpeg, WithProgress(BuildGifPaletteArgs(gifSource, palette)), ProgressFor(gifLength), OnErr, workDir, ct).ConfigureAwait(false);
 
                 if (paletteCode == 0 && File.Exists(palette))
                 {
                     Emit(LogLevel.Info, "Core", "Codificando GIF...", request.Url);
-                    var encodeCode = await _runner.RunAsync(ffmpeg, BuildGifEncodeArgs(gifSource, palette, outGif), OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+                    ReportStep("Codificando GIF", slowed ? 70 : 50, slowed ? 30 : 50);
+                    var encodeCode = await _runner.RunAsync(ffmpeg, WithProgress(BuildGifEncodeArgs(gifSource, palette, outGif)), ProgressFor(gifLength), OnErr, workDir, ct).ConfigureAwait(false);
                     Emit(encodeCode == 0 && File.Exists(outGif) ? LogLevel.Info : LogLevel.Warning,
                         "Core", encodeCode == 0 && File.Exists(outGif) ? "GIF gerado." : $"ffmpeg falhou ao codificar o GIF (código {encodeCode}).", request.Url);
                 }
@@ -257,19 +369,22 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
             }
 
             // (a) Separate MP3 from the original (normal-speed) audio, before we re-encode the video.
+            var mp3Weight = v.ExtractAudioSeparate ? 30 : 0;
             if (v.ExtractAudioSeparate)
             {
                 var mp3 = Path.ChangeExtension(src, ".mp3");
                 string[] mp3Args = ["-hide_banner", "-loglevel", "error", "-y", "-i", src, "-vn", "-c:a", "libmp3lame", "-b:a", bitrate, mp3];
                 Emit(LogLevel.Info, "Core", "Extraindo áudio separado (mp3)...", request.Url);
-                await _runner.RunAsync(ffmpeg, mp3Args, OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+                ReportStep("Extraindo mp3 separado", 0, mp3Weight);
+                await _runner.RunAsync(ffmpeg, WithProgress(mp3Args), ProgressFor(source), OnErr, workDir, ct).ConfigureAwait(false);
             }
 
             // (b) Speed change / audio strip — always outputs mp4 (also normalizes webm/mkv -> mp4).
             var outMp4 = Path.Combine(Path.GetDirectoryName(src)!, Path.GetFileNameWithoutExtension(src) + ".pixie.mp4");
             var passArgs = BuildSpeedPassArgs(src, outMp4, v.Speed, v.IncludeAudio, bitrate);
             Emit(LogLevel.Info, "Core", $"Processando vídeo (velocidade {Math.Clamp(v.Speed, 0.1, 8.0):0.##}x)...", request.Url);
-            var code = await _runner.RunAsync(ffmpeg, passArgs, OnLine, OnLine, workDir, ct).ConfigureAwait(false);
+            ReportStep(SpeedChanged(v.Speed) ? $"Re-encodando a {Math.Clamp(v.Speed, 0.1, 8.0):0.##}x" : "Removendo áudio do vídeo", mp3Weight, 100 - mp3Weight);
+            var code = await _runner.RunAsync(ffmpeg, WithProgress(passArgs), ProgressFor(Scaled(v.Speed)), OnErr, workDir, ct).ConfigureAwait(false);
 
             if (code == 0 && File.Exists(outMp4))
             {
@@ -363,11 +478,49 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
     /// <summary>
     /// Hidden staging folder (next to the executable) where yt-dlp keeps all in-progress
-    /// junk — <c>.part</c> fragments, raw <c>.webm</c>/<c>.webp</c>, pre-embed thumbnails. Only the
-    /// finished file is moved out to the output directory.
+    /// junk — <c>.part</c> fragments, raw <c>.webm</c>/<c>.webp</c>, pre-embed thumbnails — one
+    /// <c>job-…</c> sub-folder per download. Only the finished file is moved out to the output directory.
     /// </summary>
     internal static string GetStagingDir()
         => Path.Combine(AppContext.BaseDirectory, ".~downloads");
+
+    public string StagingDirectory => GetStagingDir();
+
+    public int PurgeStaging(IEnumerable<string>? keep = null)
+    {
+        if (!Directory.Exists(StagingDirectory))
+            return 0;
+        var kept = new HashSet<string>((keep ?? []).Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
+        int removed = 0;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(StagingDirectory))
+        {
+            if (kept.Contains(Path.GetFullPath(entry)))
+                continue;   // a pending processing will resume from this one
+            try
+            {
+                if (Directory.Exists(entry)) Directory.Delete(entry, recursive: true);
+                else File.Delete(entry);
+                removed++;
+            }
+            catch (Exception ex)
+            {
+                Emit(LogLevel.Warning, "Core", $"Não consegui apagar {Path.GetFileName(entry)} da pasta de staging: {ex.Message}");
+            }
+        }
+        if (removed > 0)
+            Emit(LogLevel.Info, "Core", $"Pasta de staging limpa: {removed} resíduo(s) removido(s).");
+        return removed;
+    }
+
+    public void DeleteWorkDirectory(string workDirectory)
+    {
+        var full = Path.GetFullPath(workDirectory);
+        var root = Path.GetFullPath(StagingDirectory);
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("A pasta não está dentro do staging.", nameof(workDirectory));
+        try { if (Directory.Exists(full)) Directory.Delete(full, recursive: true); }
+        catch (Exception ex) { Emit(LogLevel.Warning, "Core", $"Não consegui apagar {Path.GetFileName(full)}: {ex.Message}"); }
+    }
 
     private void PrepareStagingDir()
     {
@@ -383,14 +536,22 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         }
     }
 
-    private List<string> BuildDownloadArgs(DownloadRequest r, string? workDir = null)
+    /// <summary>Adds <c>-progress pipe:1 -nostats</c> so ffmpeg reports its position on stdout as key=value lines.</summary>
+    internal static string[] WithProgress(string[] ffmpegArgs)
+    {
+        var list = ffmpegArgs.ToList();
+        var at = list.IndexOf("-y");
+        list.InsertRange(at < 0 ? 0 : at + 1, ["-progress", "pipe:1", "-nostats"]);
+        return [.. list];
+    }
+
+    private List<string> BuildDownloadArgs(DownloadRequest r, string tempDir, string? workDir = null)
     {
         var bitrate = r.Audio.Bitrate.ToUpperInvariant().Trim(); // "192k" -> "192K"
         var args = new List<string>();
         // When a post-download ffmpeg pass is needed, everything lands in our private work folder
         // (home == temp), so we can locate the real files on disk and deliver them ourselves.
         var homeDir = workDir ?? r.OutputDirectory;
-        var tempDir = workDir ?? GetStagingDir();
 
         if (r.Video.DownloadVideo)
         {
@@ -468,7 +629,16 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
             args.Add("--embed-thumbnail");
 
         if (r.Audio.EmbedMetadata)
+        {
             args.Add("--embed-metadata");
+            // Fields the user opted out of: yt-dlp's idiom for "leave this tag empty" is an
+            // interpreter that matches the empty string into meta_<tag> (see MetadataFields).
+            foreach (var tag in MetadataFields.FfmpegKeysFor(r.Audio.ExcludedMetadataFields ?? []))
+            {
+                args.Add("--parse-metadata");
+                args.Add($":(?P<meta_{tag}>)");
+            }
+        }
 
         if (r.Advanced.MaxDuration is { } max)
         {
@@ -489,8 +659,7 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
     /// <summary>True when the video download needs a post-download ffmpeg pass: a GIF conversion,
     /// a speed change, or the "silent video + separate MP3" combo where the audio must be stripped
     /// from the kept video.</summary>
-    internal static bool VideoNeedsFfmpegPass(VideoOptions v)
-        => v.DownloadVideo && (v.ExtractGif || SpeedChanged(v.Speed) || (v.ExtractAudioSeparate && !v.IncludeAudio));
+    internal static bool VideoNeedsFfmpegPass(VideoOptions v) => v.NeedsFfmpegPass;
 
     private static bool SpeedChanged(double speed) => Math.Abs(Math.Clamp(speed, 0.1, 8.0) - 1.0) > 0.001;
 
@@ -595,7 +764,7 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
         var webpage = GetString(e, "webpage_url") ?? NormalizeEntryUrl(GetString(e, "url"), id) ?? originalUrl;
 
-        return new VideoInfo(id, title, uploader, duration, thumbnail, webpage);
+        return new VideoInfo(id, title, uploader, duration, thumbnail, webpage) { Metadata = MetadataFields.Extract(e) };
     }
 
     private static string? PickBestThumbnail(JsonElement e)

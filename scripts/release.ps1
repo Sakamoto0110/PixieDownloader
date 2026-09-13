@@ -1,0 +1,140 @@
+﻿<#
+  Monta os pacotes de release do PixieDownloader — exatamente o que o workflow do GitHub publica.
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1            # os dois .zip
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Flavor portable
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version 1.4.0   # confere com o <Version> do .csproj
+
+  Sai em bin/release/:
+    PixieDownloader-vX.Y.Z-win-x64.zip            .exe pequeno, precisa do .NET 10 Desktop Runtime instalado
+    PixieDownloader-vX.Y.Z-win-x64-portable.zip   .exe com o .NET dentro, roda em Windows pelado
+    SHA256SUMS.txt                                hash dos dois (formato do sha256sum)
+    RELEASE_NOTES.md                              tabela dos assets, usada pelo workflow no corpo da release
+
+  Cada .zip abre numa pasta PixieDownloader\ com o .exe, LICENSE e LEIA-ME.txt — e só. yt-dlp e ffmpeg não
+  vão no pacote de propósito (o app baixa os dois sozinho na primeira abertura, direto das fontes originais;
+  assim a release não redistribui o binário GPL do ffmpeg). Nada de cache/, logs/, settings ou staging vai
+  junto: a pasta é montada do zero a partir do publish. Roda no Windows PowerShell 5.1 e no pwsh 7.
+#>
+[CmdletBinding()]
+param(
+    # Versão esperada (a do tag). Quando informada, precisa bater com o <Version> do .csproj.
+    [string]$Version,
+    [ValidateSet('all', 'normal', 'portable')]
+    [string]$Flavor = 'all',
+    [switch]$SkipTests,
+    [string]$OutDir
+)
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$repo    = Split-Path -Parent $PSScriptRoot
+$csproj  = Join-Path $repo 'src\PixieDownloader\PixieDownloader.csproj'
+$sln     = Join-Path $repo 'PixieDownloader.slnx'
+$tests   = Join-Path $repo 'tests\YtDlpCore.Tests'
+$license = Join-Path $repo 'LICENSE'
+if (-not $OutDir) { $OutDir = Join-Path $repo 'bin\release' }
+
+function Step([string]$text) { Write-Host "== $text ==" -ForegroundColor Cyan }
+function Write-Utf8([string]$path, [string]$text, [bool]$bom = $false) { [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding $bom)) }
+function Run([string]$description, [scriptblock]$command) {
+    & $command
+    if ($LASTEXITCODE -ne 0) { throw "$description falhou (exit $LASTEXITCODE)" }
+}
+
+# ───── Versão: única fonte é o <Version> do .csproj; o tag só confirma ─────
+$csprojVersion = (Select-String -Path $csproj -Pattern '<Version>([^<]+)</Version>').Matches[0].Groups[1].Value.Trim()
+if (-not $csprojVersion) { throw "Não achei <Version> em $csproj" }
+if ($Version -and ($Version -ne $csprojVersion)) {
+    throw "Versão pedida ($Version) não bate com o <Version> do .csproj ($csprojVersion). Ajuste o .csproj antes de taggear."
+}
+$Version = $csprojVersion
+Write-Host "PixieDownloader $Version"
+
+$flavors = @()
+if ($Flavor -in 'all', 'normal')   { $flavors += @{ Name = 'normal';   Profile = 'FrameworkDependent'; PublishDir = 'framework-dependent'; Suffix = '' } }
+if ($Flavor -in 'all', 'portable') { $flavors += @{ Name = 'portable'; Profile = 'SelfContained';      PublishDir = 'self-contained';      Suffix = '-portable' } }
+
+# ───── 1. restore / build / test ─────
+Step '1/4 restore + build (Release)'
+Run 'dotnet restore' { dotnet restore $sln --nologo -v q }
+Run 'dotnet build'   { dotnet build $sln -c Release --no-restore --nologo -v q }
+if ($SkipTests) { Write-Host 'testes pulados (-SkipTests)' }
+else {
+    Step '1/4 testes'
+    Run 'dotnet test' { dotnet test $tests -c Release --no-build --nologo -v q }
+}
+
+# ───── 2. publish (um .exe por sabor, via os profiles versionados do projeto) ─────
+Step '2/4 publish'
+foreach ($f in $flavors) {
+    Run "publish $($f.Name)" { dotnet publish $csproj -c Release "-p:PublishProfile=$($f.Profile)" --nologo -v q }
+    $f.Exe = Join-Path $repo "src\PixieDownloader\bin\publish\$($f.PublishDir)\PixieDownloader.exe"
+    if (-not (Test-Path $f.Exe)) { throw "publish $($f.Name) não produziu $($f.Exe)" }
+    $exeVersion = (Get-Item $f.Exe).VersionInfo.ProductVersion -replace '\+.*$', ''
+    if ($exeVersion -ne $Version) { throw "O .exe publicado diz $exeVersion, esperado $Version" }
+    Write-Host ("  {0,-8} {1,6:N1} MB  {2}" -f $f.Name, ((Get-Item $f.Exe).Length / 1MB), $f.Exe)
+}
+
+# ───── 3. montar pastas e zipar ─────
+Step '3/4 pacotes'
+New-Item -ItemType Directory -Force $OutDir | Out-Null
+$sums = @()
+$notes = @("## Assets", "", "| Arquivo | O que é | SHA256 |", "|---|---|---|")
+foreach ($f in $flavors) {
+    $zipName = "PixieDownloader-v$Version-win-x64$($f.Suffix).zip"
+    $zipPath = Join-Path $OutDir $zipName
+    $stage   = Join-Path $OutDir "stage-$($f.Name)"
+    $pkg     = Join-Path $stage 'PixieDownloader'
+    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+    New-Item -ItemType Directory -Force $pkg | Out-Null
+
+    Copy-Item $f.Exe   (Join-Path $pkg 'PixieDownloader.exe')
+    Copy-Item $license (Join-Path $pkg 'LICENSE')
+
+    $runtimeLine = if ($f.Name -eq 'portable') { 'Não precisa instalar nada: o .NET vai dentro do .exe.' }
+                   else { 'Precisa do .NET 10 Desktop Runtime instalado: https://dotnet.microsoft.com/download/dotnet/10.0' }
+    # Com BOM: é um .txt pra abrir no Notepad/PowerShell, que sem BOM leem como ANSI e mostram os acentos quebrados.
+    Write-Utf8 (Join-Path $pkg 'LEIA-ME.txt') -bom $true -text (@(
+        "PixieDownloader v$Version (win-x64$($f.Suffix))"
+        "https://github.com/Sakamoto0110/PixieDownloader"
+        ""
+        "Extraia esta pasta onde quiser e abra PixieDownloader.exe."
+        $runtimeLine
+        ""
+        "Na primeira abertura o app baixa sozinho o yt-dlp e o ffmpeg (~100 MB, precisa de internet) para a pasta tools\,"
+        "e depois mantém o yt-dlp atualizado por conta própria (Verificar atualização)."
+        ""
+        "Em uso, o app cria ao lado do .exe: settings.json, tools\, cache\, logs\, .~downloads\ e pending-downloads.txt."
+    ) -join "`r`n")
+
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+    Remove-Item $stage -Recurse -Force
+
+    $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sums += "$hash  $zipName"
+    $what = if ($f.Name -eq 'portable') { 'Portable: .NET 10 embutido, roda em Windows pelado' } else { 'Precisa do .NET 10 Desktop Runtime instalado' }
+    $notes += "| ``$zipName`` | $what | ``$hash`` |"
+    Write-Host ("  {0,-45} {1,6:N1} MB  {2}" -f $zipName, ((Get-Item $zipPath).Length / 1MB), $hash)
+}
+
+# ───── 4. SHA256SUMS + notas (bloco da versão no CHANGELOG.md, se houver, seguido da tabela de assets) ─────
+Step '4/4 SHA256SUMS.txt + RELEASE_NOTES.md'
+Write-Utf8 (Join-Path $OutDir 'SHA256SUMS.txt') (($sums -join "`n") + "`n")
+$notes += ""
+$notes += "Os dois trazem só o app: na primeira abertura ele baixa o yt-dlp e o ffmpeg sozinho (precisa de internet). Confira os hashes com ``SHA256SUMS.txt``."
+
+$changelog = @()
+$changelogPath = Join-Path $repo 'CHANGELOG.md'
+if (Test-Path $changelogPath) {
+    $inSection = $false
+    foreach ($line in Get-Content $changelogPath -Encoding UTF8) {
+        if ($line -match '^## \[') { $inSection = ($line -match ("^## \[" + [regex]::Escape($Version) + "\]")); continue }
+        if ($inSection) { $changelog += $line }
+    }
+    if ($changelog.Count -eq 0) { Write-Host "  (CHANGELOG.md não tem um bloco ## [$Version] — notas só com a tabela de assets)" }
+}
+Write-Utf8 (Join-Path $OutDir 'RELEASE_NOTES.md') ((($changelog + $notes) -join "`n").Trim() + "`n")
+Write-Host "pronto: $OutDir"

@@ -1,0 +1,37 @@
+# Release do PixieDownloader: `git tag v1.4.0 && git push origin v1.4.0` cria a GitHub Release com os dois .zip.
+# O trabalho todo está em scripts/release.ps1 (o mesmo que roda localmente); aqui só tem o runner, o SDK,
+# e o `gh release create`. O tag precisa bater com o <Version> do .csproj — o script recusa se não bater.
+# Dependências fixadas de propósito (sem "latest"): runner, actions por SHA, SDK exato, tools dentro do script.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write   # gh release create
+
+jobs:
+  release:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.400'
+
+      - name: Build, test, publish, package
+        shell: pwsh
+        run: ./scripts/release.ps1 -Version ('${{ github.ref_name }}'.TrimStart('v'))
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $assets = @(Get-ChildItem bin/release/*.zip | ForEach-Object FullName) + @('bin/release/SHA256SUMS.txt')
+          gh release create $tag --verify-tag --title "PixieDownloader $($tag.TrimStart('v'))" --notes-file bin/release/RELEASE_NOTES.md --generate-notes @assets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

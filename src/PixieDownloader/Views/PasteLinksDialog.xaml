@@ -1,0 +1,48 @@
+<Window x:Class="PixieDownloader.Views.PasteLinksDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Colar links" Height="520" Width="640" MinHeight="360" MinWidth="480"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize" WindowStyle="None"
+        AllowsTransparency="False" Background="{StaticResource Brush.Bg.Base}"
+        Foreground="{StaticResource Brush.Text.Primary}"
+        FontFamily="{StaticResource Font.Family}" FontSize="{StaticResource Font.Body}">
+    <Border BorderBrush="{StaticResource Brush.Border.Default}" BorderThickness="1">
+        <Grid Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                <TextBlock Text="Colar links" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="Uma URL por linha (linhas vazias e comentários com # são ignorados). Ao confirmar, os links viram uma lista revisável — o download começa pelo botão Baixar."
+                           Style="{StaticResource Hint}" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- Plain multi-line text box: monospace, one link per line -->
+            <TextBox Grid.Row="1" x:Name="LinksBox" AcceptsReturn="True" AcceptsTab="False" TextWrapping="NoWrap"
+                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                     VerticalContentAlignment="Top" FontFamily="{StaticResource Font.Mono}" FontSize="12"
+                     TextChanged="OnTextChanged"/>
+
+            <!-- Options -->
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="12,10" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="Opções" Style="{StaticResource Label}"/>
+                    <CheckBox x:Name="NumberedOption" Content="Enumerar automaticamente (1 - , 2 - , 3 - …)"
+                              ToolTip="Prefixa o nome de cada arquivo com a posição na lista, na ordem colada"/>
+                </StackPanel>
+            </Border>
+
+            <DockPanel Grid.Row="3" Margin="0,16,0,0">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Cancelar" Style="{StaticResource GhostButton}" MinWidth="90" Click="OnCancel" IsCancel="True"/>
+                    <Button x:Name="ConfirmButton" Content="Confirmar" MinWidth="110" Margin="10,0,0,0" Click="OnConfirm" IsDefault="False" IsEnabled="False"/>
+                </StackPanel>
+                <TextBlock x:Name="CountText" Style="{StaticResource Hint}" VerticalAlignment="Center" Text="Nenhum link ainda"/>
+            </DockPanel>
+        </Grid>
+    </Border>
+</Window>

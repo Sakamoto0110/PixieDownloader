@@ -108,4 +108,32 @@ public static partial class YtDlpOutputParser
         var path = line[(idx + marker.Length)..].Trim();
         return string.IsNullOrEmpty(path) ? null : path;
     }
+
+    // ffmpeg -progress pipe:1 emits key=value blocks; the elapsed output position comes as
+    // out_time_us=1234567 (newer builds), out_time_ms=1234567 (same unit despite the name, older builds)
+    // or out_time=00:00:01.234567. A negative/"N/A" value is emitted before the first frame.
+    [GeneratedRegex(@"^out_time(?:_us|_ms)?=(?<v>[^\s]+)$", RegexOptions.CultureInvariant)]
+    private static partial Regex FfmpegOutTimeRegex();
+
+    /// <summary>Parses the output position from an ffmpeg <c>-progress</c> line, or null for any other line.</summary>
+    public static TimeSpan? TryParseFfmpegOutTime(string line)
+    {
+        if (string.IsNullOrEmpty(line))
+            return null;
+
+        var m = FfmpegOutTimeRegex().Match(line.Trim());
+        if (!m.Success)
+            return null;
+
+        var v = m.Groups["v"].Value;
+        if (line.Contains(':'))
+        {
+            return TimeSpan.TryParseExact(v, @"hh\:mm\:ss\.FFFFFF", CultureInfo.InvariantCulture, out var ts) && ts >= TimeSpan.Zero
+                ? ts
+                : null;
+        }
+        return long.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var micros) && micros >= 0
+            ? TimeSpan.FromMicroseconds(micros)
+            : null;
+    }
 }

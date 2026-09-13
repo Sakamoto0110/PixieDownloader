@@ -1,7 +1,10 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using System.Windows.Shell;
 using Microsoft.Win32;
 using PixieDownloader.ViewModels;
 using PixieDownloader.Views;
@@ -11,8 +14,14 @@ namespace PixieDownloader;
 
 public partial class MainWindow : Window
 {
+    // The layout is designed for this size; below it the content is scaled down rather than clipped.
+    private const double DesignWidth = 940;
+    private const double DesignHeight = 560;
+    private const double CaptionHeight = 48;
+
     private readonly MainViewModel _vm;
-    private bool _restoringGeometry;
+    private bool _geometryRestored;   // SizeChanged fires before Loaded — ignore it until the saved size is applied
+    private bool _shutdownDone;
 
     public MainWindow(MainViewModel vm)
     {
@@ -23,7 +32,7 @@ public partial class MainWindow : Window
         WireInteractions();
 
         Loaded += OnLoadedAsync;
-        Closing += (_, _) => _vm.OnClosing();
+        Closing += OnClosing;
         StateChanged += OnStateChanged;
         SizeChanged += OnSizeChanged;
 
@@ -89,6 +98,12 @@ public partial class MainWindow : Window
             return dlg.ShowDialog(this) == true ? dlg.FileName : null;
         };
 
+        _vm.PickPastedLinks = () =>
+        {
+            var dlg = new PasteLinksDialog { Owner = this };
+            return dlg.ShowDialog() == true ? dlg.Result : null;
+        };
+
         _vm.ChooseFfmpegKind = () =>
         {
             var dlg = new FfmpegInstallDialog { Owner = this };
@@ -119,6 +134,7 @@ public partial class MainWindow : Window
     private async void OnLoadedAsync(object sender, RoutedEventArgs e)
     {
         RestoreGeometry();
+        UpdateScale();
         try
         {
             await _vm.InitializeAsync();
@@ -126,9 +142,31 @@ public partial class MainWindow : Window
         catch { /* surfaced via status bar / logs */ }
     }
 
+    /// <summary>
+    /// Closing runs the orderly shutdown (cancel running jobs, save the pending queue, purge staging)
+    /// before the window actually goes away: the first request is deferred, the shutdown awaited, and
+    /// Close() called again once it is done.
+    /// </summary>
+    private async void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (_shutdownDone)
+            return;
+        e.Cancel = true;
+        try
+        {
+            IsEnabled = false;   // no new actions while jobs are being torn down
+            await _vm.ShutdownAsync();
+        }
+        catch { /* best effort — the app is leaving anyway */ }
+        finally
+        {
+            _shutdownDone = true;
+            Close();
+        }
+    }
+
     private void RestoreGeometry()
     {
-        _restoringGeometry = true;
         try
         {
             var ui = _vm.Settings.Ui;
@@ -140,24 +178,49 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _restoringGeometry = false;
+            _geometryRestored = true;
         }
     }
 
     private void OnStateChanged(object? sender, EventArgs e)
     {
-        if (_restoringGeometry)
+        if (!_geometryRestored)
             return;
         _vm.Settings.Ui.LastWindowState = WindowState == WindowState.Maximized ? "Maximized" : "Normal";
     }
 
     private void OnSizeChanged(object? sender, SizeChangedEventArgs e)
     {
-        if (_restoringGeometry || WindowState != WindowState.Normal)
+        UpdateScale();
+        if (!_geometryRestored || WindowState != WindowState.Normal)
             return;
         _vm.Settings.Ui.LastWindowSize.W = Width;
         _vm.Settings.Ui.LastWindowSize.H = Height;
     }
+
+    /// <summary>
+    /// Shrinking the window below the design size scales the whole content down uniformly (a
+    /// LayoutTransform, so layout happens at the design size and nothing wraps or clips). Above the
+    /// design size the scale stays 1 and the layout simply gets more room. The chrome caption follows.
+    /// </summary>
+    private void UpdateScale()
+    {
+        var w = ActualWidth > 0 ? ActualWidth : Width;
+        var h = ActualHeight > 0 ? ActualHeight : Height;
+        var scale = Math.Min(1.0, Math.Min(w / DesignWidth, h / DesignHeight));
+        scale = Math.Max(scale, 0.5);
+        if (Math.Abs(RootScale.ScaleX - scale) < 0.001)
+            return;
+        RootScale.ScaleX = scale;
+        RootScale.ScaleY = scale;
+        if (WindowChrome.GetWindowChrome(this) is { } chrome)
+            chrome.CaptionHeight = CaptionHeight * scale;
+    }
+
+    /// <summary>Any pick in the "Importar" drop-down closes it (the command itself runs via Command binding).</summary>
+    private void OnImportMenuClick(object sender, RoutedEventArgs e) => ImportToggle.IsChecked = false;
+
+    private void OnOpenRepository(object sender, RoutedEventArgs e) => ShellOpen(AppInfo.RepositoryUrl);
 
     private void OnMinimize(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 

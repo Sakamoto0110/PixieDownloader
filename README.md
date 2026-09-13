@@ -12,15 +12,30 @@ App desktop **WPF / .NET 10** (Windows) — uma interface gráfica para o [`yt-d
 - 🎬 **Vídeo (MP4)** com opções de manter/remover áudio, extrair um MP3 separado, **mudar a velocidade** (0.1×–8×, slowmo ou acelerado) e **recortar por janela de tempo** (início/fim precisos).
 - 🖼️ **Extrair GIF** de um trecho do vídeo, com controle fino de início/duração.
 - 📋 **Playlists**: analisa a playlist e mostra os itens em uma lista com checkboxes (thumbnails + preview) pra você escolher o que baixar.
-- 📄 **Importar `.txt`**: uma URL por linha vira uma lista revisável; a 1ª linha (`# Download as mp3|mp4`) define o modo, e o nome do arquivo vira a subpasta de saída.
+- 📄 **Importar**: um `.txt` (uma URL por linha; a 1ª linha `# Download as mp3|mp4` define o modo e o nome do arquivo vira a subpasta de saída) ou **colar links** numa janela, com numeração automática opcional (`1 - `, `2 - `…) — os dois viram uma lista revisável.
+- 🧾 **Fila de downloads**: cada item é um job com status e % próprios (download → processamento ffmpeg vinculados quando há re-encode), roda N em paralelo, dá pra reordenar arrastando, cancelar um/todos e limpar os concluídos. O que ficou pendente é salvo em `pending-downloads.txt` e retomado na próxima abertura — e se o app fechou com o download pronto e só o ffmpeg no meio, retoma direto do processamento, sem baixar de novo. Item que falhou (ex.: HTTP 403 do YouTube) tem "Tentar de novo".
+- 🏷️ **Metadados por campo**: a pré-visualização lista o que o yt-dlp vai embutir (título, artista, data, descrição, link…) com checkbox por campo — desmarcou, a tag sai vazia. A escolha fica salva.
+- 🧹 **Cancelar e fechar limpam tudo**: cada download tem sua pasta temporária em `.~downloads/`, apagada ao cancelar/fechar; se a sessão anterior morreu no meio, o app avisa e limpa.
 - 🔎 **Seleção por posição** na busca: `%[1:20]` seleciona os itens 1 a 20, `%[5:]`, `%[:10]`, `%[7]`.
 - 🗂️ **Organização da saída** por templates (sem subpastas, por playlist, por canal, prefixo por data) ou template customizado montado por "tokens".
-- ⚙️ Resolve e instala `yt-dlp`/`ffmpeg` automaticamente (de `./tools/` ou do PATH), com checagem de atualização do yt-dlp.
-- 🪵 Aba de logs, aba de debug (rodar comandos crus do yt-dlp) e settings persistidas com auto-save.
+- ⚙️ Resolve `yt-dlp`/`ffmpeg` de `./tools/` ou do PATH; o que faltar é baixado sozinho na primeira abertura, com checagem de atualização do yt-dlp depois.
+- 🪵 Aba de logs (ring buffer de 1000, entregue em lote), aba de debug (rodar comandos crus do yt-dlp) e settings persistidas com auto-save.
+- 🔍 A janela pode ser reduzida abaixo do tamanho de projeto — o conteúdo escala uniformemente em vez de quebrar.
 
 ---
 
-## Como rodar
+## Baixar
+
+Na página de [Releases](https://github.com/Sakamoto0110/PixieDownloader/releases), cada versão traz dois `.zip` — extraia e abra `PixieDownloader.exe`:
+
+| Arquivo | Precisa de |
+|---|---|
+| `PixieDownloader-vX.Y.Z-win-x64.zip` | [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) instalado |
+| `PixieDownloader-vX.Y.Z-win-x64-portable.zip` | nada — o .NET vai dentro do `.exe` |
+
+Nenhum dos dois traz `yt-dlp`/`ffmpeg`: na primeira abertura o app baixa os dois sozinho (~100 MB) para `tools\` e depois mantém o yt-dlp atualizado. `SHA256SUMS.txt` na release confere os pacotes.
+
+## Como rodar (dev)
 
 Pré-requisitos: **.NET 10 SDK** (Windows). `yt-dlp` e `ffmpeg` podem ser instalados pelo próprio app na primeira execução, ou colocados em `./tools/`.
 
@@ -40,6 +55,7 @@ dotnet run --project src/PixieDownloader -c Release
 | `src/PixieDownloader` (`net10.0-windows`) | App WPF: Views, ViewModels, tema. |
 | `tests/YtDlpCore.Tests` | Testes do parser. |
 | `src/SmokeTest` | Harness de fumaça (offline + online opcional) que valida o pipeline de velocidade/ffmpeg de ponta a ponta. |
+| `scripts/release.ps1` + `.github/workflows/release.yml` | Monta os dois `.zip` da release (local ou ao fazer push de um tag `vX.Y.Z`). |
 
 ---
 

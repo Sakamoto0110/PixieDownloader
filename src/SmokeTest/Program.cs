@@ -99,6 +99,8 @@ async Task RunOnlineAsync()
     }
 
     using var svc = new YtDlpService(logger: null, toolsDirectory: toolsDir, cacheDirectory: Path.Combine(work, "cache"));
+    // Surface yt-dlp/ffmpeg warnings and errors so a failure here is diagnosable from the console alone.
+    svc.LogEmitted += (_, e) => { if (e.Level >= LogLevel.Warning) Console.WriteLine($"    [{e.Level}] {e.Source}: {e.Message}"); };
     using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(8));
 
     double? origDur = null;

@@ -44,6 +44,31 @@ public interface IYtDlpService
         IProgress<BatchProgress>? progress,
         CancellationToken ct);
 
+    // ───── Staging folder maintenance ─────
+    /// <summary>
+    /// Hidden folder next to the executable where every download keeps its in-progress files in a
+    /// private sub-folder (<c>job-…</c>). A sub-folder that outlives its download is a leftover from a
+    /// session that ended abruptly.
+    /// </summary>
+    string StagingDirectory { get; }
+
+    /// <summary>
+    /// While true, a download cancelled after its ffmpeg pass has started keeps its job folder (the
+    /// downloaded video) instead of deleting it, and the folder path is what the caller persists to
+    /// resume the processing later. The app switches this on only for the shutdown cancellation — a
+    /// user cancel always removes everything.
+    /// </summary>
+    bool KeepWorkDirsOnCancel { get; set; }
+
+    /// <summary>
+    /// Deletes everything inside the staging folder except the job folders in <paramref name="keep"/>
+    /// (the ones a pending processing can resume from). Returns how many entries were removed.
+    /// </summary>
+    int PurgeStaging(IEnumerable<string>? keep = null);
+
+    /// <summary>Deletes one job folder (must live inside the staging folder) — for a resumable processing the user discarded.</summary>
+    void DeleteWorkDirectory(string workDirectory);
+
     // ───── Debug ─────
     /// <summary>Runs yt-dlp with arbitrary args and returns the full stdout/stderr.</summary>
     Task<RawCommandResult> RunRawAsync(string[] args, CancellationToken ct);

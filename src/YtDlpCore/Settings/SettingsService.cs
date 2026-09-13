@@ -145,6 +145,7 @@ public sealed class SettingsService : IDisposable
         Sub(Current.Advanced);
         Sub(Current.Tools);
         Current.RecentUrls.CollectionChanged += (_, _) => ScheduleSave();
+        Current.Audio.ExcludedMetadataFields.CollectionChanged += (_, _) => ScheduleSave();
     }
 
     private void OnAnyChanged(object? sender, PropertyChangedEventArgs e) => ScheduleSave();
