@@ -19,6 +19,9 @@ App desktop **WPF / .NET 10** (Windows) — GUI para o `yt-dlp` baixar áudio (M
 - A versão mora **só** em `<Version>` no `src/PixieDownloader/PixieDownloader.csproj` (hoje `1.4.0`). Dela saem o FileVersion/ProductVersion do `.exe`, o selo `v1.4.0` no header (`AppInfo.cs`; ao lado, o ícone do GitHub abre `AppInfo.RepositoryUrl`) e o User-Agent `PixieDownloader/1.4.0` do `YtDlpService` (passado pelo `App.xaml.cs`; sem ele o UA é `PixieDownloader/dev`). Bump antes de cortar release.
 - Histórico publicado no GitHub: **1.0** (tag `Stable`, 2026-07-05) e **1.3** (tags `Net10` = framework-dependent e `Portable` = self-contained, 2026-07-27). As tags não carregam o número — o título da release é que diz a versão; `gh release list` mostra. Minor por feature (1.1 playlist/staging, 1.2 modo vídeo + import, 1.3 trim/GIF); a fila de downloads é a 1.4.
 
+## Roadmap
+- `docs/ROADMAP.md` (com `docs/pixie-arch.png`) é o plano 1.5 → 1.8: o app não cresce — tudo além do download vira **plugin** carregado em runtime via `PixieDownloader.Sdk`, nenhum plugin conhece outro. 1.5 = só o SDK + loader + plugin de teste; 1.6 = o extractor de tracklist vira plugin; 1.7 = tracklist aninhada; 1.8 = discovery. As decisões de design já tomadas (Sdk referencia o core, `YtDlpCore` também é assembly compartilhado no ALC, Sdk dentro do exe e distribuído como um `.nupkg` só) estão lá — ler antes de mexer em plugin.
+
 ## Estrutura
 - `src/YtDlpCore/` — biblioteca core (`net10.0`, **sem WPF**): serviço do yt-dlp, parser, settings, logger, cache de thumbnail.
 - `src/PixieDownloader/` — app WPF (`net10.0-windows`): Views, ViewModels, tema.
