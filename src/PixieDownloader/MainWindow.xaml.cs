@@ -6,6 +6,8 @@ using System.Windows.Controls;
 using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using Microsoft.Win32;
+using PixieDownloader.Plugins;
+using PixieDownloader.Sdk;
 using PixieDownloader.ViewModels;
 using PixieDownloader.Views;
 using YtDlpCore;
@@ -30,6 +32,7 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         WireInteractions();
+        WirePluginTabs();
 
         Loaded += OnLoadedAsync;
         Closing += OnClosing;
@@ -118,6 +121,62 @@ public partial class MainWindow : Window
 
         _vm.OpenFolderPath = ShellOpen;
         _vm.OpenUrl = ShellOpen;
+    }
+
+    // ───── Plugin tabs ─────
+    // One tab per loaded plugin that implements IUiContribution, between "Fila" and "Debug / Tests": features
+    // first, diagnostics last. Inserting there is safe because only the queue tab is addressed by index
+    // (MainViewModel.QueueTabIndex). The tab's Tag carries the plugin id so disabling can find it again.
+    private const int FirstPluginTabIndex = MainViewModel.QueueTabIndex + 1;
+    private int _pluginTabCount;
+
+    private void WirePluginTabs()
+    {
+        foreach (var plugin in _vm.Plugins.Plugins.Where(p => p.Status == PluginStatus.Loaded))
+            AddPluginTab(plugin);
+        _vm.Plugins.PluginEnabled += (_, plugin) => AddPluginTab(plugin);
+        _vm.Plugins.PluginDisabled += (_, plugin) => RemovePluginTab(plugin);
+    }
+
+    private void AddPluginTab(InstalledPlugin plugin)
+    {
+        if (plugin.Instance is not IUiContribution ui)
+            return;
+
+        object header;
+        FrameworkElement content;
+        try
+        {
+            header = ui.TabHeader;
+            content = ui.CreateView();
+        }
+        catch (Exception ex)
+        {
+            // The plugin stays loaded (its capabilities may still work); the tab says what went wrong instead of vanishing.
+            _vm.Plugins.Emit(LogEntry.Now(LogLevel.Error, "Plugin:" + plugin.Id, $"A aba falhou ao abrir: {ex.Message}", ex: ex));
+            header = plugin.Name;
+            content = new TextBlock
+            {
+                Text = $"A aba do plugin \"{plugin.Name}\" falhou ao abrir:\n{ex.Message}",
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(16),
+            };
+        }
+        content.Margin = new Thickness(0, 4, 0, 0);   // same top gap the built-in panels use
+
+        MainTabs.Items.Insert(FirstPluginTabIndex + _pluginTabCount, new TabItem { Header = header, Content = content, Tag = plugin.Id });
+        _pluginTabCount++;
+    }
+
+    private void RemovePluginTab(InstalledPlugin plugin)
+    {
+        var tab = MainTabs.Items.OfType<TabItem>().FirstOrDefault(t => Equals(t.Tag, plugin.Id));
+        if (tab is null)
+            return;
+        if (ReferenceEquals(MainTabs.SelectedItem, tab))
+            MainTabs.SelectedIndex = 0;
+        MainTabs.Items.Remove(tab);
+        _pluginTabCount--;
     }
 
     private static void ShellOpen(string target)

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The plugin host end to end: PluginCatalog + PluginLoadContext loading the real Hello plugin from a -->
+  <!-- plugins/ folder the way the app does. net10.0-windows because the Sdk is (typed FrameworkElement), -->
+  <!-- which is also why these tests don't live in YtDlpCore.Tests. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PixieDownloader\PixieDownloader.csproj" />
+    <!-- Built before the tests, never referenced: the tests copy its output into a plugins/ folder and load it from there. -->
+    <ProjectReference Include="..\..\src\Plugins\Pixie.Hello\Pixie.Hello.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Where the built Hello plugin is, for the same Configuration; read back through AssemblyMetadataAttribute. -->
+    <AssemblyMetadata Include="HelloPluginOutput" Value="$(MSBuildThisFileDirectory)..\..\src\Plugins\Pixie.Hello\bin\$(Configuration)\net10.0-windows\" />
+  </ItemGroup>
+
+</Project>

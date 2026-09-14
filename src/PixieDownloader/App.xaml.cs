@@ -1,5 +1,7 @@
+using System.IO;
 using System.Threading;
 using System.Windows;
+using PixieDownloader.Plugins;
 using PixieDownloader.ViewModels;
 using YtDlpCore;
 
@@ -17,6 +19,7 @@ public partial class App : Application
     private SessionLogger? _logger;
     private SettingsService? _settings;
     private YtDlpService? _ytDlpService;
+    private PluginCatalog? _plugins;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -43,7 +46,15 @@ public partial class App : Application
         _settings.LoadAsync().GetAwaiter().GetResult();
 
         _ytDlpService = new YtDlpService(_logger, appVersion: AppInfo.Version);
-        var viewModel = new MainViewModel(_ytDlpService, _settings, _logger);
+        _plugins = new PluginCatalog(
+            pluginsDirectory: Path.Combine(AppContext.BaseDirectory, "plugins"),
+            dataDirectory: Path.Combine(AppContext.BaseDirectory, "data"),
+            _ytDlpService, _settings.Current.Plugins, _logger);
+        var viewModel = new MainViewModel(_ytDlpService, _settings, _logger, _plugins);
+
+        // Plugins get their Configure here, on the UI thread, before the window exists; the window then
+        // builds a tab for each one that has a UI. The VM is already listening, so their log lines land in the Logs tab.
+        _plugins.Initialize();
 
         var window = new MainWindow(viewModel);
         MainWindow = window;
@@ -79,6 +90,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         // Dispose in reverse dependency order; the logger flushes its JSON last.
+        _plugins?.ShutdownAll();
         _settings?.Dispose();
         _ytDlpService?.Dispose();
         _logger?.Dispose();

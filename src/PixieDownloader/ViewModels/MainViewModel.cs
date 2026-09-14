@@ -10,6 +10,7 @@ using System.Windows.Data;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using PixieDownloader.Mvvm;
+using PixieDownloader.Plugins;
 using YtDlpCore;
 
 namespace PixieDownloader.ViewModels;
@@ -19,6 +20,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly IYtDlpService _service;
     private readonly SettingsService _settings;
     private readonly SessionLogger _logger;
+    private readonly PluginCatalog _plugins;
     private readonly Dispatcher _dispatcher;
 
     private CancellationTokenSource? _analyzeCts;
@@ -30,12 +32,15 @@ public sealed class MainViewModel : ObservableObject
     private string? _importFolder;       // output subfolder name for the imported list (null = output dir itself)
     private bool _importNumbered;        // imported rows get a "N - " file-name prefix (N = position in the list)
 
-    public MainViewModel(IYtDlpService service, SettingsService settings, SessionLogger logger)
+    public MainViewModel(IYtDlpService service, SettingsService settings, SessionLogger logger, PluginCatalog plugins)
     {
         _service = service;
         _settings = settings;
         _logger = logger;
+        _plugins = plugins;
         _dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+        // Plugins load before the window exists; listening from the start keeps their load lines in the Logs tab.
+        _plugins.LogEmitted += OnLogEmitted;
 
         // ───────────────────────── Commands ─────────────────────────
         AddTokenCommand = new RelayCommand<TokenOption>(AddToken);
@@ -176,8 +181,14 @@ public sealed class MainViewModel : ObservableObject
     public Action<string>? OpenFolderPath { get; set; }
     public Action<string>? OpenUrl { get; set; }
 
-    /// <summary>Index of the selected tab: 0 = Baixar, 1 = Fila, 2 = Debug, 3 = Logs.</summary>
+    /// <summary>
+    /// Index of the selected tab: 0 = Baixar, 1 = Fila, then one tab per loaded plugin that has a UI, then
+    /// Debug and Logs. Only the queue is addressed by index — the rest shifts as plugin tabs come and go.
+    /// </summary>
     public const int QueueTabIndex = 1;
+
+    /// <summary>The plugins found next to the executable; the window builds their tabs from it (MainWindow.WirePluginTabs).</summary>
+    public PluginCatalog Plugins => _plugins;
 
     private int _selectedTabIndex;
     public int SelectedTabIndex
@@ -1043,6 +1054,7 @@ public sealed class MainViewModel : ObservableObject
     public async Task ShutdownAsync()
     {
         _service.LogEmitted -= OnLogEmitted;
+        _plugins.LogEmitted -= OnLogEmitted;
         _autoAnalyzeCts?.Cancel();
         _analyzeCts?.Cancel();
         _gifPreviewCts?.Cancel();

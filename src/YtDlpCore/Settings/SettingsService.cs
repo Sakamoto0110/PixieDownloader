@@ -144,8 +144,10 @@ public sealed class SettingsService : IDisposable
         Sub(Current.Video);
         Sub(Current.Advanced);
         Sub(Current.Tools);
+        Sub(Current.Plugins);
         Current.RecentUrls.CollectionChanged += (_, _) => ScheduleSave();
         Current.Audio.ExcludedMetadataFields.CollectionChanged += (_, _) => ScheduleSave();
+        Current.Plugins.DisabledIds.CollectionChanged += (_, _) => ScheduleSave();
     }
 
     private void OnAnyChanged(object? sender, PropertyChangedEventArgs e) => ScheduleSave();

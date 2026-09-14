@@ -15,7 +15,18 @@ public sealed class AppSettings : ObservableObject
     public VideoSettings Video { get; init; } = new();
     public AdvancedSettings Advanced { get; init; } = new();
     public ToolSettings Tools { get; init; } = new();
+    public PluginSettings Plugins { get; init; } = new();
     public ObservableCollection<RecentUrl> RecentUrls { get; init; } = [];
+}
+
+/// <summary>
+/// The only plugin state the user owns; everything else about a plugin is read from its folder. Ids are
+/// the folder names under <c>plugins/</c>.
+/// </summary>
+public sealed class PluginSettings : ObservableObject
+{
+    /// <summary>Installed plugins the user switched off. Absent = enabled; an id that is no longer installed is harmless.</summary>
+    public ObservableCollection<string> DisabledIds { get; init; } = [];
 }
 
 public sealed class UiSettings : ObservableObject

@@ -25,6 +25,8 @@ FolderProfile*.pubxml
 /tools/
 /cache/
 /logs/
+/plugins/
+/data/
 settings.json
 settings.json.bak
 

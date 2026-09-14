@@ -98,7 +98,8 @@
         </Border>
 
         <!-- ═══════════ Tabs ═══════════ -->
-        <TabControl Grid.Row="1" Margin="16,12,16,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
+        <!-- Plugin tabs are inserted after "Fila" at runtime (MainWindow.WirePluginTabs). -->
+        <TabControl x:Name="MainTabs" Grid.Row="1" Margin="16,12,16,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
             <TabItem Header="Baixar">
                 <Grid Margin="0,4,0,0">
                     <Grid.RowDefinitions>

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The proof plugin of 1.5 (docs/ROADMAP.md): a XAML tab, a call into IYtDlpService, a capability. It is -->
+  <!-- what catches the duplicate-type problem of the AssemblyLoadContext with ten lines instead of in the -->
+  <!-- middle of the tracklist extractor. Dev-only: the app never references it and the release never ships it. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Pixie.Hello</RootNamespace>
+    <!-- What every plugin project needs: a .deps.json of its own (PluginLoadContext resolves the plugin's -->
+    <!-- dependencies through it) and its NuGet packages copied next to it. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Both shared assemblies come from the host at runtime (PluginLoadContext hands them to the default -->
+    <!-- context by name), so neither is copied here. A plugin outside the repo gets the same pair from the nupkg. -->
+    <ProjectReference Include="..\..\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj" Private="false" ExcludeAssets="runtime" />
+    <ProjectReference Include="..\..\YtDlpCore\YtDlpCore.csproj" Private="false" ExcludeAssets="runtime" />
+    <None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Dev convenience: mirror the build into the app's output as plugins/hello/, so `dotnet run` shows the tab. -->
+  <Target Name="CopyToAppPlugins" AfterTargets="Build">
+    <ItemGroup>
+      <_HelloOutput Include="$(TargetDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_HelloOutput)"
+          DestinationFolder="$(MSBuildThisFileDirectory)..\..\PixieDownloader\bin\$(Configuration)\net10.0-windows\plugins\hello\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

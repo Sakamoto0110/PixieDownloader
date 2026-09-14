@@ -34,7 +34,6 @@ $repo    = Split-Path -Parent $PSScriptRoot
 $csproj  = Join-Path $repo 'src\PixieDownloader\PixieDownloader.csproj'
 $sdkProj = Join-Path $repo 'src\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj'
 $sln     = Join-Path $repo 'PixieDownloader.slnx'
-$tests   = Join-Path $repo 'tests\YtDlpCore.Tests'
 $license = Join-Path $repo 'LICENSE'
 if (-not $OutDir) { $OutDir = Join-Path $repo 'bin\release' }
 
@@ -68,7 +67,7 @@ Run 'dotnet build'   { dotnet build $sln -c Release --no-restore --nologo -v q }
 if ($SkipTests) { Write-Host 'testes pulados (-SkipTests)' }
 else {
     Step '1/4 testes'
-    Run 'dotnet test' { dotnet test $tests -c Release --no-build --nologo -v q }
+    Run 'dotnet test' { dotnet test $sln -c Release --no-build --nologo -v q }   # os dois projetos de teste da solução
 }
 
 # ───── 2. publish (um .exe por sabor, via os profiles versionados do projeto) ─────
@@ -111,7 +110,7 @@ foreach ($f in $flavors) {
         "Na primeira abertura o app baixa sozinho o yt-dlp e o ffmpeg (~100 MB, precisa de internet) para a pasta tools\,"
         "e depois mantém o yt-dlp atualizado por conta própria (Verificar atualização)."
         ""
-        "Em uso, o app cria ao lado do .exe: settings.json, tools\, cache\, logs\, .~downloads\ e pending-downloads.txt."
+        "Em uso, o app cria ao lado do .exe: settings.json, tools\, cache\, logs\, plugins\, data\, .~downloads\ e pending-downloads.txt."
     ) -join "`r`n")
 
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
