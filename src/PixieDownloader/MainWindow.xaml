@@ -54,7 +54,7 @@
                             <Image x:Name="LogoImage" Stretch="Uniform"/>
                         </Grid>
                     </Border>
-                    <TextBlock Text="PixieDownloader" FontWeight="SemiBold" FontSize="15" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="PixieDownloader" FontWeight="SemiBold" FontSize="13" Margin="10,0,0,0" VerticalAlignment="Center"/>
                     <!-- Hit-test visible in the chrome, otherwise the caption area swallows the hover and the tooltip never shows -->
                     <Border Background="{StaticResource Brush.Bg.Elevated}" CornerRadius="5" Padding="6,1" Margin="8,1,0,0" VerticalAlignment="Center"
                             ToolTip="{x:Static local:AppInfo.VersionDetail}" shell:WindowChrome.IsHitTestVisibleInChrome="True">
