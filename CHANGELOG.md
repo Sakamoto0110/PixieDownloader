@@ -3,6 +3,18 @@
 Versões seguem o `<Version>` do `.csproj` e as tags `vX.Y.Z`; só o que foi publicado entra aqui.
 O bloco da versão é copiado para o corpo da GitHub Release pelo `scripts/release.ps1`.
 
+## [1.5.0] — 2026-09-14
+
+### Adicionado
+- **Plugins**: o app passa a carregar extensões de `plugins\<id>\` (ao lado do `.exe`), cada uma com um `plugin.json` e o próprio assembly, num contexto de carga isolado. Um plugin pode contribuir uma aba, usar o serviço de download do app, guardar arquivos em `data\<id>\` e publicar/consumir capacidades por id — sem conhecer outro plugin. Plugin com `apiVersion` incompatível, manifesto inválido ou dependência ausente é recusado com o motivo nos logs, sem carregar código.
+- **Aba Plugins**: lista o que há em `plugins\` com nome, versão, API, status e motivo; Habilitar / Desabilitar (efeito imediato) / Desinstalar (a pasta some no próximo start; dá pra desfazer até lá) / abrir pasta.
+- **`PixieDownloader.Sdk` como pacote**: o contrato de plugin (`IPixiePlugin`, `IPluginHost`, `IUiContribution`, `PluginManifest`) sai na release como `PixieDownloader.Sdk.1.0.0.nupkg`, com o `YtDlpCore` dentro e docs XML. Tem versão própria (o `apiVersion`, hoje 1.0) — não é para o usuário final. Consumo: `dotnet nuget add source <pasta>` + `PackageReference` com `ExcludeAssets="runtime"`; README no pacote.
+- `docs/ROADMAP.md`: a arquitetura de plugins e o plano 1.5 → 1.8.
+
+### Alterado
+- Além de `tools\`, `cache\` e `logs\`, o app cria `plugins\` e `data\` ao lado do `.exe`.
+- Nenhum plugin vai no pacote: o app sai igual ao 1.4.1 até você instalar um.
+
 ## [1.4.1] — 2026-09-14
 
 ### Corrigido
