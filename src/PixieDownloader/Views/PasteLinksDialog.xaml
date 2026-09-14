@@ -15,11 +15,23 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="0" Margin="0,0,0,12">
-                <TextBlock Text="Colar links" Style="{StaticResource SectionTitle}"/>
-                <TextBlock Text="Uma URL por linha (linhas vazias e comentários com # são ignorados). Ao confirmar, os links viram uma lista revisável — o download começa pelo botão Baixar."
-                           Style="{StaticResource Hint}" TextWrapping="Wrap"/>
-            </StackPanel>
+            <Grid Grid.Row="0" Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Colar links" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock Text="Uma URL por linha (linhas vazias e comentários com # são ignorados). Ao confirmar, os links viram uma lista revisável — o download começa pelo botão Baixar."
+                               Style="{StaticResource Hint}" TextWrapping="Wrap"/>
+                </StackPanel>
+                <!-- Same glyph and style as the main window's caption; here it is just Cancelar with a corner to click. -->
+                <Button Grid.Column="1" Style="{StaticResource CloseButton}" Click="OnCancel" ToolTip="Fechar"
+                        VerticalAlignment="Top" Margin="12,-8,-10,0">
+                    <Path Data="M 0,0 L 10,10 M 0,10 L 10,0" Stroke="{StaticResource Brush.Text.Primary}" StrokeThickness="1.2"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+            </Grid>
 
             <!-- Plain multi-line text box: monospace, one link per line -->
             <TextBox Grid.Row="1" x:Name="LinksBox" AcceptsReturn="True" AcceptsTab="False" TextWrapping="NoWrap"
