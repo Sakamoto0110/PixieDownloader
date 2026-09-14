@@ -1,0 +1,9 @@
+# title: Some album mix
+# duration: 30:00
+# expect: source=Description shape=TitleWithDuration count=4 first=Artist One - Opening start1=none
+--- description ---
+Tracklist:
+Artist One - Opening 3:45
+Artist Two - Second Song 4:12
+Artist Three - Interlude 1:30
+Artist Four - Closer 6:02

@@ -1,0 +1,10 @@
+# title: Top 15 Lofi Rap Remixes
+# duration: 40:00
+# expect: source=TopComment shape=Timestamped count=4 first=Biggie Smalls - Dead Wrong (Lofi Remix) start2=2:13
+--- description ---
+💜 A Top 15 List of The Best Lofi Rap Remixes in 2019!
+--- comment author=@viewer likes=703 ---
+Biggie Smalls - Dead Wrong (Lofi Remix) 0:00
+Ski Mask The Slump God - Babywipe (Lofi Remix) 2:13
+Notorious B.I.G - Dead Wrong (Lofi Remix) 5:15
+Drake - Look Alive (Godly Lofi Remix) : 7:40

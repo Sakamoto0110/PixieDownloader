@@ -1,0 +1,20 @@
+# title: Fred again.. | Boiler Room: London
+# duration: 1:11:00
+# expect: source=TopComment shape=Timestamped count=4 first=Fred again.. & Swedish House Mafia - Not Alone (Intro Edit) author=@viewer
+# note: A descrição tem um link externo de tracklist: https://blrrm.tv/3zQvnoV
+# note: O comentário fixado (@boilerroom) tem um link externo de tracklist: https://blrrm.tv/4jLvczY
+--- description ---
+Get the tracklist here: https://blrrm.tv/3zQvnoV
+
+The wait is over. UK super-producer Fred again.. makes his Boiler Room debut in London.
+
+► Listen to Boiler Room’s archive on Apple Music: https://apple.co/BoilerRoom
+► Shop Boiler Room clothing: https://blrrm.tv/shop
+► Subscribe to Boiler Room: https://blrrm.tv/YT
+--- comment pinned uploader author=@boilerroom likes=3000 ---
+Get the full tracklist: https://blrrm.tv/4jLvczY
+--- comment author=@viewer likes=12000 ---
+1:10      Fred again.. & Swedish House Mafia - Not Alone (Intro Edit)
+1:30      Fred again.. - Kammy (like I do)
+6:15      Fred again.. - Danielle (smile on my face)
+9:40      Fred again.. - Marea (we’ve lost dancing)

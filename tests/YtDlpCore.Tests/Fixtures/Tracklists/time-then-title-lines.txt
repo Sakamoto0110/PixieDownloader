@@ -1,0 +1,13 @@
+# title: Time on one line, title on the next
+# duration: 12:00
+# expect: source=Description shape=Timestamped count=3 header=Tracklist: first=Artist - First start3=7:45
+--- description ---
+Tracklist:
+00:00
+Artist - First
+03:20
+Artist - Second
+07:45
+Artist - Third
+
+Thanks for listening!

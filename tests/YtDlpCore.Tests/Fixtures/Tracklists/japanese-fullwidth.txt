@@ -1,0 +1,12 @@
+# title: 作業用BGM ミックス
+# duration: 1:00:00
+# expect: source=Description shape=Timestamped count=3 header=トラックリスト: first=アーティスト - 曲名 start2=3:45
+--- description ---
+今日のミックスです。
+
+トラックリスト：
+００：００　アーティスト － 曲名
+０３：４５　ほかのアーティスト － 別の曲
+１２：３０　三人目 － 最後の曲
+
+チャンネル登録お願いします！

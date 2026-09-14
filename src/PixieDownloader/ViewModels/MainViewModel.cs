@@ -1092,10 +1092,12 @@ public sealed class MainViewModel : ObservableObject
         StatusText = "Analisando URL...";
         try
         {
-            var info = await _service.AnalyzeUrlAsync(url, TreatAsPlaylist, cts.Token);
+            var info = await _service.AnalyzeUrlAsync(url, TreatAsPlaylist, fetchComments: true, cts.Token);
             ApplyUrlInfo(info);
             _settings.AddRecentUrl(url, TitleOf(info));
             StatusText = "Pronto";
+            if (info is VideoUrlInfo single)
+                ReportTracklist(single.Video);
         }
         catch (OperationCanceledException)
         {
@@ -2096,7 +2098,7 @@ public sealed class MainViewModel : ObservableObject
     {
         try
         {
-            return await _service.AnalyzeUrlAsync(url, treatAsPlaylist: false, ct) switch
+            return await _service.AnalyzeUrlAsync(url, treatAsPlaylist: false, fetchComments: false, ct) switch
             {
                 VideoUrlInfo v => v.Video,
                 PlaylistUrlInfo p => p.Playlist.Items.FirstOrDefault() ?? FallbackVideo(url),
@@ -2338,6 +2340,29 @@ public sealed class MainViewModel : ObservableObject
         // "Embutir metadados (ID3)" in the advanced options is the same switch as the preview panel's master.
         if (e.PropertyName == nameof(AudioSettings.EmbedMetadata))
             SyncMetadataItemsFromSettings();
+    }
+
+    // ───────────────────────── Tracklist (detecção na análise) ─────────────────────────
+    // Every single-video analysis runs the heuristic tracklist detector over the description, the pinned
+    // comment and the other top comments. For now the result only goes to the debug tab, as a report
+    // (URL / title / what was found) — it is how the heuristic gets tuned against real videos before
+    // anything is written to disk or shown in the sidebar.
+
+    /// <summary>What the detector found for the last analysed single video (null until one is analysed).</summary>
+    public TracklistReport? LastTracklistReport { get; private set; }
+
+    private void ReportTracklist(VideoInfo video)
+    {
+        try
+        {
+            LastTracklistReport = TracklistExtractor.Analyze(video);
+            AppendDebug(TracklistReportFormatter.Format(video, LastTracklistReport));
+        }
+        catch (Exception ex)
+        {
+            // A parsing surprise must never break the analysis itself — it's diagnostic output.
+            AppendDebug($"[tracklist] erro ao detectar: {ex.Message}\n");
+        }
     }
 
     // ───────────────────────── Metadados (painel de pré-visualização) ─────────────────────────

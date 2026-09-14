@@ -27,8 +27,11 @@ public interface IYtDlpService
     /// Analyses a URL and returns metadata + items, without downloading.
     /// When <paramref name="treatAsPlaylist"/> is true, a URL carrying a list is expanded into a
     /// playlist (<c>--flat-playlist</c>); when false, only the single video is read (<c>--no-playlist</c>).
+    /// With <paramref name="fetchComments"/> a single video also brings its top comments
+    /// (<see cref="VideoInfo.Comments"/> — pinned first) at the cost of a second or two; playlist
+    /// entries never do. Leave it off when resolving many URLs in a row.
     /// </summary>
-    Task<UrlInfo> AnalyzeUrlAsync(string url, bool treatAsPlaylist, CancellationToken ct);
+    Task<UrlInfo> AnalyzeUrlAsync(string url, bool treatAsPlaylist, bool fetchComments, CancellationToken ct);
 
     /// <summary>Downloads a thumbnail and stores it in the local cache. Returns the local path.</summary>
     Task<string> GetThumbnailAsync(string videoId, string thumbnailUrl, CancellationToken ct);

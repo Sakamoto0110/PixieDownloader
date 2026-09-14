@@ -52,14 +52,21 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
     // ───────────────────────── URL analysis ─────────────────────────
 
-    public async Task<UrlInfo> AnalyzeUrlAsync(string url, bool treatAsPlaylist, CancellationToken ct)
+    public async Task<UrlInfo> AnalyzeUrlAsync(string url, bool treatAsPlaylist, bool fetchComments, CancellationToken ct)
     {
         var ytDlp = RequireYtDlp();
         Emit(LogLevel.Info, "Core", $"Analisando URL ({(treatAsPlaylist ? "playlist" : "vídeo único")})...", url);
 
-        string[] args = treatAsPlaylist
-            ? ["--dump-single-json", "--flat-playlist", "--no-warnings", url]
-            : ["--dump-single-json", "--no-playlist", "--no-warnings", url];
+        var args = new List<string> { "--dump-single-json", treatAsPlaylist ? "--flat-playlist" : "--no-playlist", "--no-warnings" };
+        if (fetchComments)
+        {
+            // Only the top of the thread: the pinned comment always leads it, and the uploader's own
+            // and the most-liked ones follow — enough to find a tracklist posted there. No replies.
+            args.Add("--write-comments");
+            args.Add("--extractor-args");
+            args.Add("youtube:comment_sort=top;max_comments=20,20,0,0");
+        }
+        args.Add(url);
         var (code, stdout, stderr) = await _runner.RunCapturedAsync(ytDlp, args, ct).ConfigureAwait(false);
         LogStderr(stderr, url);
 
@@ -764,7 +771,12 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
         var webpage = GetString(e, "webpage_url") ?? NormalizeEntryUrl(GetString(e, "url"), id) ?? originalUrl;
 
-        return new VideoInfo(id, title, uploader, duration, thumbnail, webpage) { Metadata = MetadataFields.Extract(e) };
+        return new VideoInfo(id, title, uploader, duration, thumbnail, webpage)
+        {
+            Metadata = MetadataFields.Extract(e),
+            Chapters = ChapterInfo.ReadAll(e),     // both empty on a flat playlist entry
+            Comments = CommentInfo.ReadAll(e),
+        };
     }
 
     private static string? PickBestThumbnail(JsonElement e)

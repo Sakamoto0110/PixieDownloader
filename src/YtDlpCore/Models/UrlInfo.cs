@@ -30,6 +30,18 @@ public record VideoInfo(
     /// a flat playlist entry typically carries just title/uploader/url.
     /// </summary>
     public IReadOnlyDictionary<string, string> Metadata { get; init; } = MetadataFields.Empty;
+
+    /// <summary>The full description — the same text that <see cref="Metadata"/> embeds under "description".</summary>
+    public string? Description => Metadata.TryGetValue("description", out var d) ? d : null;
+
+    /// <summary>yt-dlp's <c>chapters</c> (YouTube's parse of description timestamps). Empty for flat playlist entries.</summary>
+    public IReadOnlyList<ChapterInfo> Chapters { get; init; } = [];
+
+    /// <summary>
+    /// The top comments, when the analysis asked for them (single video only — see
+    /// <see cref="IYtDlpService.AnalyzeUrlAsync"/>): the pinned one first if there is one, most liked next.
+    /// </summary>
+    public IReadOnlyList<CommentInfo> Comments { get; init; } = [];
 }
 
 public record PlaylistInfo(

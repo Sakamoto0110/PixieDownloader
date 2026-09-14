@@ -1,0 +1,27 @@
+# title: 3 AM Coding Session - Lofi Hip Hop Mix
+# duration: 1:34:00
+# expect: source=Description shape=Timestamped count=5 header=🎵 Tracklist first=santpoort — lost ones (with P.R.)
+# candidates: 1
+--- description ---
+→ 3 AM Coding Session - Lofi Hip Hop Mix [Study & Coding Beats]
+→ feardog's lofi hip hop mix to study, sleep, relax or code to
+
+🎵 Tracklist
+
+[00:00] santpoort — lost ones (with P.R.)
+[02:00] oatmello — passport w/ hm surf
+[04:03] Purrple Cat — Opening The Window For Some Fresh Air
+[06:03] Sweet Medicine 甘い薬 — sweet medicine & mindeliq - secret bay
+[01:32:41] Kayou. — Kayou. - it was only an autumn tale
+
+🎶 Support Artists
+
+santpoort → https://soundcloud.com/santpoortnoord
+oatmello → https://soundcloud.com/oatmello
+Purrple Cat → https://soundcloud.com/purrplecat
+Sweet Medicine 甘い薬 → https://soundcloud.com/sweet-medicine
+Brenky. → Bordeira
+Kayou. → https://soundcloud.com/iamkayouofficial
+
+🎨 Artwork by mienar
+ → https://www.instagram.com/_mienar/
