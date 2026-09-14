@@ -98,7 +98,7 @@
         </Border>
 
         <!-- ═══════════ Tabs ═══════════ -->
-        <!-- Plugin tabs are inserted after "Fila" at runtime (MainWindow.WirePluginTabs). -->
+        <!-- Tabs contributed by plugins are inserted between "Fila" and "Plugins" at runtime (MainWindow.WirePluginTabs). -->
         <TabControl x:Name="MainTabs" Grid.Row="1" Margin="16,12,16,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
             <TabItem Header="Baixar">
                 <Grid Margin="0,4,0,0">
@@ -407,6 +407,10 @@
 
             <TabItem Header="{Binding QueueTabHeader}">
                 <views:QueuePanel Margin="0,4,0,0"/>
+            </TabItem>
+
+            <TabItem Header="Plugins">
+                <views:PluginsPanel Margin="0,4,0,0"/>
             </TabItem>
 
             <TabItem Header="Debug / Tests">

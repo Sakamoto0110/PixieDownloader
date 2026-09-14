@@ -124,9 +124,10 @@ public partial class MainWindow : Window
     }
 
     // ───── Plugin tabs ─────
-    // One tab per loaded plugin that implements IUiContribution, between "Fila" and "Debug / Tests": features
-    // first, diagnostics last. Inserting there is safe because only the queue tab is addressed by index
-    // (MainViewModel.QueueTabIndex). The tab's Tag carries the plugin id so disabling can find it again.
+    // One tab per loaded plugin that implements IUiContribution, between "Fila" and "Plugins": features first,
+    // then the tab that manages them, then diagnostics. Inserting there is safe because only the queue tab is
+    // addressed by index (MainViewModel.QueueTabIndex). The tab's Tag carries the plugin id so disabling can
+    // find it again.
     private const int FirstPluginTabIndex = MainViewModel.QueueTabIndex + 1;
     private int _pluginTabCount;
 

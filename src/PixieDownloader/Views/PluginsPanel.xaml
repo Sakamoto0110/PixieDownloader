@@ -1,0 +1,94 @@
+<UserControl x:Class="PixieDownloader.Views.PluginsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PixieDownloader.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance vm:MainViewModel}"
+             d:DesignHeight="600" d:DesignWidth="900">
+    <Border Style="{StaticResource Card}" Padding="14">
+        <DockPanel>
+            <!-- Header + toolbar -->
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                <Button DockPanel.Dock="Right" Content="Abrir pasta de plugins" Style="{StaticResource GhostButton}" Padding="10,5"
+                        Command="{Binding OpenPluginsFolderCommand}"
+                        ToolTip="{Binding PluginsDirectory}"/>
+                <TextBlock Text="Plugins" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+            </DockPanel>
+
+            <!-- What the two destructive-looking actions really do, in words, so nobody has to guess -->
+            <TextBlock DockPanel.Dock="Top" Margin="0,0,0,10" Style="{StaticResource Hint}" TextWrapping="Wrap"
+                       Text="Cada plugin é uma pasta em plugins\ (ao lado do .exe) com um plugin.json. Desabilitar tem efeito na hora: a aba some e o plugin para. Desinstalar remove a pasta no próximo start do app — até lá dá pra desfazer."/>
+
+            <Grid>
+                <!-- Empty state -->
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Visibility="{Binding PluginItems.Count, Converter={StaticResource ZeroToVis}}">
+                    <TextBlock Text="Nenhum plugin instalado." Style="{StaticResource Hint}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding PluginsDirectory}" Style="{StaticResource Hint}" HorizontalAlignment="Center" Margin="0,4,0,0"
+                               FontFamily="{StaticResource Font.Mono}" FontSize="11"/>
+                </StackPanel>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding PluginItems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:PluginItemViewModel}">
+                                <Border BorderThickness="4,0,0,0" BorderBrush="{Binding StatusBrushKey, Converter={StaticResource ResBrush}}"
+                                        Padding="10,8" Margin="0,1" CornerRadius="4" Background="Transparent">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <TextBlock DockPanel.Dock="Left" Text="{Binding VersionLabel}" Style="{StaticResource Hint}"
+                                                           Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding Id}" Style="{StaticResource Hint}" FontFamily="{StaticResource Font.Mono}" FontSize="11"
+                                                           Margin="8,0,0,0" VerticalAlignment="Center" ToolTip="{Binding Directory}"/>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding StatusText}" FontSize="12" Margin="0,3,0,0"
+                                                       Foreground="{Binding StatusBrushKey, Converter={StaticResource ResBrush}}"/>
+                                            <TextBlock Text="{Binding Detail}" Style="{StaticResource Hint}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                       Visibility="{Binding HasDetail, Converter={StaticResource BoolToVis}}"/>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                            <Button Content="Habilitar" Padding="10,4" FontSize="12" Margin="0,0,6,0"
+                                                    Visibility="{Binding CanEnable, Converter={StaticResource BoolToVis}}"
+                                                    ToolTip="Carrega o plugin agora (relê o plugin.json — um recusado com o arquivo já corrigido entra)"
+                                                    Command="{Binding DataContext.EnablePluginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Content="Desabilitar" Style="{StaticResource GhostButton}" Padding="10,4" FontSize="12" Margin="0,0,6,0"
+                                                    Visibility="{Binding CanDisable, Converter={StaticResource BoolToVis}}"
+                                                    ToolTip="Para o plugin e tira a aba dele agora; fica desligado nas próximas aberturas"
+                                                    Command="{Binding DataContext.DisablePluginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Content="Desinstalar" Style="{StaticResource GhostButton}" Padding="10,4" FontSize="12" Margin="0,0,6,0"
+                                                    Visibility="{Binding CanUninstall, Converter={StaticResource BoolToVis}}"
+                                                    ToolTip="Para o plugin agora; a pasta plugins\&lt;id&gt; é apagada no próximo start (os dados em data\&lt;id&gt; ficam)"
+                                                    Command="{Binding DataContext.UninstallPluginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Content="Desfazer" Padding="10,4" FontSize="12" Margin="0,0,6,0"
+                                                    Visibility="{Binding CanCancelUninstall, Converter={StaticResource BoolToVis}}"
+                                                    ToolTip="Cancela a desinstalação; o plugin volta desabilitado"
+                                                    Command="{Binding DataContext.CancelUninstallPluginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Content="Pasta" Style="{StaticResource GhostButton}" Padding="10,4" FontSize="12"
+                                                    ToolTip="{Binding Directory}"
+                                                    Command="{Binding DataContext.OpenPluginFolderCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </DockPanel>
+    </Border>
+</UserControl>

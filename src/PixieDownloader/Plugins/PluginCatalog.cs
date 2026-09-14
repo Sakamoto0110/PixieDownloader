@@ -142,7 +142,7 @@ public sealed class PluginCatalog
         if (File.Exists(Path.Combine(plugin.Directory, UninstallMarkerFileName)))
         {
             plugin.Status = PluginStatus.PendingUninstall;
-            plugin.Detail = "marcado para desinstalar — a pasta some no próximo start";
+            plugin.Detail = "a pasta não pôde ser removida no último start (arquivo em uso?) — tento de novo no próximo";
             return;
         }
 
@@ -309,7 +309,8 @@ public sealed class PluginCatalog
     {
         if (Find(id) is not { } plugin)
             return;
-        const string detail = "será removido ao reiniciar";
+        // The status line already says "será removido ao reiniciar"; the detail adds what that does and doesn't touch.
+        var detail = $"a pasta plugins\\{plugin.Id} some no próximo start; o que estiver em data\\{plugin.Id} fica";
         File.WriteAllText(Path.Combine(plugin.Directory, UninstallMarkerFileName), "");
         if (plugin.Status == PluginStatus.Loaded)
             Unload(plugin, PluginStatus.PendingUninstall, detail);

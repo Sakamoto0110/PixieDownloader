@@ -39,8 +39,10 @@ public sealed class MainViewModel : ObservableObject
         _logger = logger;
         _plugins = plugins;
         _dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
-        // Plugins load before the window exists; listening from the start keeps their load lines in the Logs tab.
+        // Plugins load before the window exists; listening from the start keeps their load lines in the Logs tab,
+        // and the Plugins tab rebuilds its rows on every status change (Initialize included).
         _plugins.LogEmitted += OnLogEmitted;
+        _plugins.Changed += (_, _) => RefreshPluginItems();
 
         // ───────────────────────── Commands ─────────────────────────
         AddTokenCommand = new RelayCommand<TokenOption>(AddToken);
@@ -75,6 +77,12 @@ public sealed class MainViewModel : ObservableObject
         ClearCookiesCommand = new RelayCommand(ClearCookies);
         OpenLogsFolderCommand = new RelayCommand(OpenLogsFolder);
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder);
+        EnablePluginCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) _plugins.Enable(p.Id); });
+        DisablePluginCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) _plugins.Disable(p.Id); });
+        UninstallPluginCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) _plugins.Uninstall(p.Id); });
+        CancelUninstallPluginCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) _plugins.CancelUninstall(p.Id); });
+        OpenPluginFolderCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) OpenFolderPath?.Invoke(p.Directory); });
+        OpenPluginsFolderCommand = new RelayCommand(() => OpenFolderPath?.Invoke(_plugins.PluginsDirectory));
         OpenReleasePageCommand = new RelayCommand(OpenReleasePage);
         SimulateCommand = new AsyncRelayCommand(Simulate);
         GetFilenameCommand = new AsyncRelayCommand(GetFilename);
@@ -154,6 +162,12 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ClearCookiesCommand { get; }
     public RelayCommand OpenLogsFolderCommand { get; }
     public RelayCommand OpenOutputFolderCommand { get; }
+    public RelayCommand<PluginItemViewModel> EnablePluginCommand { get; }
+    public RelayCommand<PluginItemViewModel> DisablePluginCommand { get; }
+    public RelayCommand<PluginItemViewModel> UninstallPluginCommand { get; }
+    public RelayCommand<PluginItemViewModel> CancelUninstallPluginCommand { get; }
+    public RelayCommand<PluginItemViewModel> OpenPluginFolderCommand { get; }
+    public RelayCommand OpenPluginsFolderCommand { get; }
     public RelayCommand OpenReleasePageCommand { get; }
     public AsyncRelayCommand SimulateCommand { get; }
     public AsyncRelayCommand GetFilenameCommand { get; }
@@ -183,7 +197,7 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>
     /// Index of the selected tab: 0 = Baixar, 1 = Fila, then one tab per loaded plugin that has a UI, then
-    /// Debug and Logs. Only the queue is addressed by index — the rest shifts as plugin tabs come and go.
+    /// Plugins, Debug and Logs. Only the queue is addressed by index — the rest shifts as plugin tabs come and go.
     /// </summary>
     public const int QueueTabIndex = 1;
 
@@ -946,6 +960,24 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _updateAvailable;
         set => SetProperty(ref _updateAvailable, value);
+    }
+
+    // ───────────────────────── Plugins tab ─────────────────────────
+    // One row per folder under plugins/, whatever its state, so a refused or broken plugin is visible and
+    // can be uninstalled. The rows are plain snapshots of the catalog's InstalledPlugin objects, rebuilt on
+    // PluginCatalog.Changed — few items, and the row VM keeps no state of its own. The commands above call
+    // straight into the catalog; disable is immediate, uninstall only marks the folder (see PluginCatalog).
+
+    public ObservableCollection<PluginItemViewModel> PluginItems { get; } = [];
+
+    /// <summary>Where plugins live (plugins/ next to the executable), for the empty state and "Abrir pasta".</summary>
+    public string PluginsDirectory => _plugins.PluginsDirectory;
+
+    private void RefreshPluginItems()
+    {
+        PluginItems.Clear();
+        foreach (var plugin in _plugins.Plugins)
+            PluginItems.Add(new PluginItemViewModel(plugin));
     }
 
     // ───────────────────────── Debug tab ─────────────────────────
