@@ -3,6 +3,13 @@
 Versões seguem o `<Version>` do `.csproj` e as tags `vX.Y.Z`; só o que foi publicado entra aqui.
 O bloco da versão é copiado para o corpo da GitHub Release pelo `scripts/release.ps1`.
 
+## [1.4.1] — 2026-09-14
+
+### Corrigido
+- O app inteiro renderizava na Segoe UI clássica: "Segoe UI Variable" não é um nome de família que o WPF conheça (só "… Text", "… Display" e "… Small"), então caía no fallback. Agora usa a Segoe UI Variable Text do Windows 11, como o resto do sistema; no Windows 10 continua na Segoe UI.
+- Nome do app na barra de título menor (13px), na escala do selo de versão e do ícone do GitHub em vez de competir com os títulos de seção.
+- "Colar links": o texto começa no canto superior esquerdo da caixa em vez do meio (o mesmo valia pra caixa de argumentos da aba Debug), e a janela ganhou um botão de fechar — equivale a Cancelar.
+
 ## [1.4.0] — 2026-09-13
 
 ### Adicionado
