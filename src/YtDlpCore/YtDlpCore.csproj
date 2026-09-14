@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- The XML docs ship inside the PixieDownloader.Sdk package (IYtDlpService is part of the plugin API), -->
+    <!-- so plugin authors get IntelliSense. 1591 (undocumented public member) stays quiet on purpose. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <!-- The smoke-test harness exercises internal helpers (e.g. BuildSpeedPassArgs) directly; the unit tests, the tracklist line classifier. -->

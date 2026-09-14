@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The plugin contract: the types a plugin and the host must see as the SAME types across the -->
+  <!-- AssemblyLoadContext boundary (docs/ROADMAP.md). WPF is on so IUiContribution can hand the host a -->
+  <!-- typed FrameworkElement. The host ships this inside its single-file exe; plugin authors get the -->
+  <!-- very same assembly through the .nupkg that `dotnet pack` builds from here (scripts/release.ps1). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The apiVersion. Independent of the app's version: adding a member to a public interface here is a -->
+    <!-- minor bump, changing or removing one is a major. It is also the package version, so "which API does -->
+    <!-- this exe carry" and "which package do I reference" are the same number (SdkVersion.cs reads it back). -->
+    <Version>1.0.0</Version>
+    <!-- IntelliSense for plugin authors: the XML docs travel in the package next to the DLLs. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>PixieDownloader.Sdk</PackageId>
+    <Authors>Nekovih</Authors>
+    <Description>Contrato de plugin do PixieDownloader: IPixiePlugin, IPluginHost, IUiContribution e PluginManifest, mais o YtDlpCore que o host expõe aos plugins.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Sakamoto0110/PixieDownloader</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Sakamoto0110/PixieDownloader</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>pixiedownloader;plugin;yt-dlp</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IYtDlpService lives in the core, so the core is part of the plugin API. It goes INSIDE this package -->
+    <!-- instead of becoming a dependency (two packages would be two versions to keep in step): PrivateAssets -->
+    <!-- keeps it out of the nuspec, the None items below put its DLL and XML docs in lib\. The paths are the -->
+    <!-- core's plain build output, which is what `dotnet pack -c Release` builds — pack fails loudly (NU5019) -->
+    <!-- if they ever move. The lib folder must be the one the Sdk's own DLL lands in (NuGet picks a single lib -->
+    <!-- folder per package), and NuGet spells it with the platform version: net10.0-windows7.0. -->
+    <ProjectReference Include="..\YtDlpCore\YtDlpCore.csproj" PrivateAssets="all" />
+    <None Include="..\YtDlpCore\bin\$(Configuration)\net10.0\YtDlpCore.dll" Pack="true" PackagePath="lib\net10.0-windows7.0\" Visible="false" />
+    <None Include="..\YtDlpCore\bin\$(Configuration)\net10.0\YtDlpCore.xml" Pack="true" PackagePath="lib\net10.0-windows7.0\" Visible="false" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

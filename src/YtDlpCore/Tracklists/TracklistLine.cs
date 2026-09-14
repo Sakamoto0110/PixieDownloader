@@ -91,7 +91,7 @@ internal sealed class TracklistLine
 
     /// <summary>
     /// <c>[01. ]  [00:00]  [ - 04:30]  [ - ]  [1. ]  text</c> — a leading time with the decorations seen in
-    /// the wild around it: an item number before it ("01. 00:00 …", "1<tab>00:00 …"), brackets, an end time,
+    /// the wild around it: an item number before it ("01. 00:00 …", "1&lt;tab&gt;00:00 …"), brackets, an end time,
     /// a separator, and an item number after it ("00:00 | 1. …").
     /// </summary>
     private static readonly Regex LeadingTime = new(

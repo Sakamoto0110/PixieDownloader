@@ -1,7 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- The Sdk goes into the single-file bundle with the app: plugins resolve it from here by name (they never -->
+  <!-- carry a copy), so exe and plugin API can't drift apart. Plugin authors get the same assembly as a .nupkg. -->
   <ItemGroup>
     <ProjectReference Include="..\YtDlpCore\YtDlpCore.csproj" />
+    <ProjectReference Include="..\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj" />
   </ItemGroup>
 
   <!-- Logo assets: the .ico brands the header badge (loaded via pack URI) and the .exe/window icon. -->

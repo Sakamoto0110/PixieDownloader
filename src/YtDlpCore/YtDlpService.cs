@@ -20,6 +20,9 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
 
     public event EventHandler<LogEntry>? LogEmitted;
 
+    /// <param name="logger">Session log on disk; every <see cref="LogEmitted"/> entry is written there too. Null = events only.</param>
+    /// <param name="toolsDirectory">Where yt-dlp/ffmpeg live or get downloaded to; null = <c>tools/</c> next to the executable.</param>
+    /// <param name="cacheDirectory">Thumbnail cache; null = <c>cache/thumbnails/</c> next to the executable.</param>
     /// <param name="appVersion">
     /// Version sent in the User-Agent of our own HTTP calls (thumbnails, tool downloads, update check) —
     /// the app passes its assembly version; a caller that passes nothing gets "dev".

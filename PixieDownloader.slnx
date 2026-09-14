@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/PixieDownloader/PixieDownloader.csproj" />
+    <Project Path="src/PixieDownloader.Sdk/PixieDownloader.Sdk.csproj" />
     <Project Path="src/YtDlpCore/YtDlpCore.csproj" />
   </Folder>
   <Folder Name="/tests/">

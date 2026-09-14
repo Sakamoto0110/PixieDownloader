@@ -8,7 +8,8 @@
   Sai em bin/release/:
     PixieDownloader-vX.Y.Z-win-x64.zip            .exe pequeno, precisa do .NET 10 Desktop Runtime instalado
     PixieDownloader-vX.Y.Z-win-x64-portable.zip   .exe com o .NET dentro, roda em Windows pelado
-    SHA256SUMS.txt                                hash dos dois (formato do sha256sum)
+    PixieDownloader.Sdk.A.B.C.nupkg               o SDK pra escrever plugins (versão própria = apiVersion, não a do app)
+    SHA256SUMS.txt                                hash dos três (formato do sha256sum)
     RELEASE_NOTES.md                              tabela dos assets, usada pelo workflow no corpo da release
 
   Cada .zip abre numa pasta PixieDownloader\ com o .exe, LICENSE e LEIA-ME.txt — e só. yt-dlp e ffmpeg não
@@ -31,6 +32,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $repo    = Split-Path -Parent $PSScriptRoot
 $csproj  = Join-Path $repo 'src\PixieDownloader\PixieDownloader.csproj'
+$sdkProj = Join-Path $repo 'src\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj'
 $sln     = Join-Path $repo 'PixieDownloader.slnx'
 $tests   = Join-Path $repo 'tests\YtDlpCore.Tests'
 $license = Join-Path $repo 'LICENSE'
@@ -50,7 +52,10 @@ if ($Version -and ($Version -ne $csprojVersion)) {
     throw "Versão pedida ($Version) não bate com o <Version> do .csproj ($csprojVersion). Ajuste o .csproj antes de taggear."
 }
 $Version = $csprojVersion
-Write-Host "PixieDownloader $Version"
+# O SDK tem versão própria (o apiVersion do contrato de plugin), lida do mesmo jeito.
+$sdkVersion = (Select-String -Path $sdkProj -Pattern '<Version>([^<]+)</Version>').Matches[0].Groups[1].Value.Trim()
+if (-not $sdkVersion) { throw "Não achei <Version> em $sdkProj" }
+Write-Host "PixieDownloader $Version (Sdk $sdkVersion)"
 
 $flavors = @()
 if ($Flavor -in 'all', 'normal')   { $flavors += @{ Name = 'normal';   Profile = 'FrameworkDependent'; PublishDir = 'framework-dependent'; Suffix = '' } }
@@ -120,11 +125,24 @@ foreach ($f in $flavors) {
     Write-Host ("  {0,-45} {1,6:N1} MB  {2}" -f $zipName, ((Get-Item $zipPath).Length / 1MB), $hash)
 }
 
+# O SDK de plugins: um .nupkg só (contrato + YtDlpCore dentro), empacotado do build Release do passo 1 —
+# --no-build pra ser exatamente o que foi testado. O host leva a mesma assembly dentro do .exe; o pacote é a
+# superfície de compile-time de quem escreve plugin fora do repo (docs/ROADMAP.md, "Distribuição").
+$nupkgName = "PixieDownloader.Sdk.$sdkVersion.nupkg"
+$nupkgPath = Join-Path $OutDir $nupkgName
+if (Test-Path $nupkgPath) { Remove-Item $nupkgPath -Force }
+Run 'dotnet pack Sdk' { dotnet pack $sdkProj -c Release --no-build --nologo -v q -o $OutDir }
+if (-not (Test-Path $nupkgPath)) { throw "dotnet pack não produziu $nupkgPath" }
+$hash = (Get-FileHash $nupkgPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$sums += "$hash  $nupkgName"
+$notes += "| ``$nupkgName`` | SDK pra escrever plugins (``PackageReference``), não é pra usuário final | ``$hash`` |"
+Write-Host ("  {0,-45} {1,6:N1} MB  {2}" -f $nupkgName, ((Get-Item $nupkgPath).Length / 1MB), $hash)
+
 # ───── 4. SHA256SUMS + notas (bloco da versão no CHANGELOG.md, se houver, seguido da tabela de assets) ─────
 Step '4/4 SHA256SUMS.txt + RELEASE_NOTES.md'
 Write-Utf8 (Join-Path $OutDir 'SHA256SUMS.txt') (($sums -join "`n") + "`n")
 $notes += ""
-$notes += "Os dois trazem só o app: na primeira abertura ele baixa o yt-dlp e o ffmpeg sozinho (precisa de internet). Confira os hashes com ``SHA256SUMS.txt``."
+$notes += "Os dois .zip trazem só o app: na primeira abertura ele baixa o yt-dlp e o ffmpeg sozinho (precisa de internet). O .nupkg é o SDK de plugins (versão própria, o apiVersion). Confira os hashes com ``SHA256SUMS.txt``."
 
 $changelog = @()
 $changelogPath = Join-Path $repo 'CHANGELOG.md'
