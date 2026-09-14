@@ -1104,11 +1104,11 @@ public sealed class MainViewModel : ObservableObject
         StatusText = "Analisando URL...";
         try
         {
-            var info = await _service.AnalyzeUrlAsync(url, TreatAsPlaylist, fetchComments: true, cts.Token);
+            var info = await _service.AnalyzeUrlAsync(url, TreatAsPlaylist, fetchComments: TracklistDebugReport, cts.Token);
             ApplyUrlInfo(info);
             _settings.AddRecentUrl(url, TitleOf(info));
             StatusText = "Pronto";
-            if (info is VideoUrlInfo single)
+            if (TracklistDebugReport && info is VideoUrlInfo single)
                 ReportTracklist(single.Video);
         }
         catch (OperationCanceledException)
@@ -2355,10 +2355,12 @@ public sealed class MainViewModel : ObservableObject
     }
 
     // ───────────────────────── Tracklist (detecção na análise) ─────────────────────────
-    // Every single-video analysis runs the heuristic tracklist detector over the description, the pinned
-    // comment and the other top comments. For now the result only goes to the debug tab, as a report
-    // (URL / title / what was found) — it is how the heuristic gets tuned against real videos before
-    // anything is written to disk or shown in the sidebar.
+    // With the switch on, every single-video analysis also fetches the top comments (+1-2 s) and runs the
+    // heuristic tracklist detector over the description, the pinned comment and the others, dumping a
+    // report (URL / title / what was found) into the debug tab — how the heuristic was tuned against real
+    // videos. Off until the detector becomes the 1.6 plugin: nothing shows the result yet, so nobody pays
+    // for the comments. Flip it to tune against a new video.
+    private const bool TracklistDebugReport = false;
 
     /// <summary>What the detector found for the last analysed single video (null until one is analysed).</summary>
     public TracklistReport? LastTracklistReport { get; private set; }
