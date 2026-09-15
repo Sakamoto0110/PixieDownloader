@@ -53,6 +53,7 @@ jobs:
           }
           gh release download plugins --pattern plugins.json --dir bin/release --clobber
           if ($LASTEXITCODE -ne 0) { Write-Host 'sem plugins.json ainda: o catálogo nasce agora' }
+          exit 0   # senão o step herda o exit 1 do gh acima
 
       - name: Build, test, zip, catálogo
         shell: pwsh
