@@ -64,7 +64,7 @@
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
                                             <Button Content="Habilitar" Padding="10,4" FontSize="12" Margin="0,0,6,0"
                                                     Visibility="{Binding CanEnable, Converter={StaticResource BoolToVis}}"
-                                                    ToolTip="Carrega o plugin agora (relê o plugin.json — um recusado com o arquivo já corrigido entra)"
+                                                    ToolTip="Carrega o plugin agora (lê a pasta de novo — um recusado com o problema já corrigido entra)"
                                                     Command="{Binding DataContext.EnablePluginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                                     CommandParameter="{Binding}"/>
                                             <Button Content="Desabilitar" Style="{StaticResource GhostButton}" Padding="10,4" FontSize="12" Margin="0,0,6,0"

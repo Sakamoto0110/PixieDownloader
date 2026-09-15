@@ -456,10 +456,14 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- The debug dot: red = the Debug / Tests tab is hidden, green = shown. Press and hold it for
-                         five seconds to enable; one click while green hides it again. Unlabelled on purpose. -->
-                    <Ellipse x:Name="DebugDot" Width="9" Height="9" VerticalAlignment="Center" Margin="0,0,12,0"
-                             MouseLeftButtonDown="OnDebugDotMouseDown" MouseLeftButtonUp="OnDebugDotMouseUp" MouseLeave="OnDebugDotMouseLeave"/>
+                    <!-- The debug dot, built exactly like the two indicators next to it: red = the Debug / Tests tab is
+                         hidden, green = shown. Press and hold (dot or label) for five seconds to enable; one click
+                         while green hides it again. No tooltip — it is not meant to explain itself. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,12,0" Background="Transparent"
+                                MouseLeftButtonDown="OnDebugDotMouseDown" MouseLeftButtonUp="OnDebugDotMouseUp" MouseLeave="OnDebugDotMouseLeave">
+                        <Ellipse x:Name="DebugDot" Width="9" Height="9" VerticalAlignment="Center"/>
+                        <TextBlock Text="debug" Margin="6,0,0,0" Style="{StaticResource Hint}" VerticalAlignment="Center"/>
+                    </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,0,12,0" ToolTip="{Binding YtDlp.Tooltip}">
                         <Ellipse Width="9" Height="9" VerticalAlignment="Center"
                                  Fill="{Binding YtDlp.GlyphColorKey, Converter={StaticResource ResBrush}}"/>
