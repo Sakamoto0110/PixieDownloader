@@ -92,10 +92,10 @@ public sealed class PluginStoreTests : IDisposable
         var catalog = NewCatalog();
         catalog.Initialize();
         Assert.Empty(catalog.Plugins);
-        var progress = new List<double>();
+        var progress = new ProgressRecorder();   // synchronous: Progress<T> would post through xunit's context, racing the asserts
 
         PluginInstallOutcome outcome;
-        using (var staged = await store.DownloadAsync(entry, new Progress<double>(progress.Add), CancellationToken.None))
+        using (var staged = await store.DownloadAsync(entry, progress, CancellationToken.None))
         {
             Assert.StartsWith(Path.Combine(PluginsDir, PluginStore.StagingPrefix), staged.Folder);   // under plugins/, in a dot-folder
             Assert.Equal("tracktracer", staged.Manifest.Id);
@@ -110,8 +110,8 @@ public sealed class PluginStoreTests : IDisposable
         Assert.True(File.Exists(Path.Combine(PluginsDir, "tracktracer", "Pixie.TrackTracer.dll")));
         Assert.True(File.Exists(Path.Combine(PluginsDir, "tracktracer", "TagLibSharp.dll")));
         Assert.Empty(Directory.GetDirectories(PluginsDir, PluginStore.StagingPrefix + "*"));   // the staging is gone with the StagedPlugin
-        SpinWait.SpinUntil(() => progress.Count > 0, 1000);
-        Assert.Equal(100, progress.Last());
+        Assert.True(progress.Reports > 0);
+        Assert.Equal(100, progress.Last);
     }
 
     [Fact]
@@ -323,6 +323,19 @@ public sealed class PluginStoreTests : IDisposable
         var service = new YtDlpService(logger: null, toolsDirectory: Path.Combine(_root, "tools"), cacheDirectory: Path.Combine(_root, "cache"));
         _disposables.Add(service);
         return new PluginCatalog(PluginsDir, Path.Combine(_root, "data"), service, new PluginSettings(), logger: null);
+    }
+
+    /// <summary>Records reports on the thread that makes them — the download's last one is 100, before DownloadAsync returns.</summary>
+    private sealed class ProgressRecorder : IProgress<double>
+    {
+        public int Reports { get; private set; }
+        public double Last { get; private set; }
+
+        public void Report(double value)
+        {
+            Reports++;
+            Last = value;
+        }
     }
 
     /// <summary>Serves the "release": the file named by the request's last path segment, or 404.</summary>

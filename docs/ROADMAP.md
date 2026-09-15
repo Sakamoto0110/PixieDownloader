@@ -113,8 +113,12 @@ Isso permite listar plugins desabilitados na aba de plugins, e recusar
 
 Unload real não funciona na prática em WPF: `DependencyProperty` registra
 globalmente no processo e não tem API para desfazer. `ResourceDictionary`
-merjado e `DataTemplate` cacheado agravam. O ALC fica colecionável mesmo assim,
-mas não se promete hot reload.
+merjado e `DataTemplate` cacheado agravam. Por isso o ALC **não** é
+colecionável (foi, até a 1.7): um contexto colecionável que ninguém referencia
+mais é descarregado pelo GC por trás do WPF, que resolve recursos `pack://`
+por *nome* de assembly em caches do processo — deu "does not have a resource
+identified by the URI" como flake nos testes do host. Hot reload não é
+promessa.
 
 - **Desabilitar** — efeito imediato: remove a aba, cancela o `CancellationToken`
   do plugin, marca a flag. A memória continua ocupada; ninguém percebe.
