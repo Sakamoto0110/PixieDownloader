@@ -22,7 +22,9 @@
             <TextBlock DockPanel.Dock="Top" Text="{Binding Message}" Style="{DynamicResource Hint}" TextWrapping="Wrap"
                        Visibility="{Binding ShowMessage, Converter={StaticResource BoolToVis}}"/>
 
-            <DockPanel Visibility="{Binding HasVideo, Converter={StaticResource BoolToVis}}">
+            <!-- One shared-size scope for the summary line and every row: the "number · time · title" block is as
+                 wide as the widest of them, and the links start right after it, left-aligned — one column. -->
+            <DockPanel Visibility="{Binding HasVideo, Converter={StaticResource BoolToVis}}" Grid.IsSharedSizeScope="True">
                 <!-- The video -->
                 <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                     <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Url}"/>
@@ -44,7 +46,13 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
-                <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Style="{DynamicResource Hint}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="Track"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{Binding Summary}" Style="{DynamicResource Hint}"/>
+                </Grid>
 
                 <!-- Detection notes (hints the detector saw: "tracklist in the comments", an external link…) -->
                 <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Notes}" Margin="0,0,0,8">
@@ -69,16 +77,21 @@
                             <DataTemplate DataType="{x:Type local:EntryRow}">
                                 <Grid Margin="0,2">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="32"/>
-                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="Track"/>
                                         <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding Number}" Style="{DynamicResource Hint}" FontFamily="{DynamicResource Font.Mono}"/>
-                                    <TextBlock Grid.Column="1" Text="{Binding Time}" FontFamily="{DynamicResource Font.Mono}" MinWidth="64" Margin="0,0,10,0"
-                                               Foreground="{DynamicResource Brush.Text.Secondary}"/>
-                                    <TextBlock Grid.Column="2" Text="{Binding Text}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
-                                    <TextBlock Grid.Column="3" Margin="12,0,0,0" MaxWidth="360" TextTrimming="CharacterEllipsis"
+                                    <Grid Grid.Column="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="32"/>
+                                            <ColumnDefinition Width="74"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Number}" Style="{DynamicResource Hint}" FontFamily="{DynamicResource Font.Mono}"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Time}" FontFamily="{DynamicResource Font.Mono}"
+                                                   Foreground="{DynamicResource Brush.Text.Secondary}"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding Text}" MaxWidth="520" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
+                                    </Grid>
+                                    <TextBlock Grid.Column="1" Margin="24,0,0,0" HorizontalAlignment="Left" TextTrimming="CharacterEllipsis"
                                                Visibility="{Binding HasLink, Converter={StaticResource BoolToVis}}">
                                         <Hyperlink NavigateUri="{Binding Link}" RequestNavigate="OnLinkRequested" ToolTip="{Binding Link}"
                                                    Foreground="{DynamicResource Brush.Text.Secondary}">
