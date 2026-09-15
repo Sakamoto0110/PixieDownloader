@@ -198,10 +198,12 @@ public sealed class MainViewModel : ObservableObject
     public Action<string>? OpenUrl { get; set; }
 
     /// <summary>
-    /// Index of the selected tab: 0 = Baixar, 1 = Fila, then one tab per loaded plugin that has a UI, then
-    /// Plugins, Debug and Logs. Only the queue is addressed by index — the rest shifts as plugin tabs come and go.
+    /// The tab strip: 0 = Baixar, 1 = Fila, 2 = Plugins, then one tab per loaded plugin that has a UI (folder
+    /// order), then Debug / Tests (only while enabled) and Logs last. Only these two are addressed by index —
+    /// the rest shifts as plugin tabs come and go.
     /// </summary>
     public const int QueueTabIndex = 1;
+    public const int PluginsTabIndex = 2;
 
     /// <summary>The plugins found next to the executable; the window builds their tabs from it (MainWindow.WirePluginTabs).</summary>
     public PluginCatalog Plugins => _plugins;

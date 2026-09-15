@@ -3,6 +3,12 @@
 Versões seguem o `<Version>` do `.csproj` e as tags `vX.Y.Z`; só o que foi publicado entra aqui.
 O bloco da versão é copiado para o corpo da GitHub Release pelo `scripts/release.ps1`.
 
+## [1.6.1] — 2026-09-14
+
+### Alterado
+- A aba **Debug / Tests** fica escondida por padrão. Uma bolinha vermelha na barra de status (à esquerda de "yt-dlp") a libera: clique e segure por 5 segundos — ela fica verde e a aba aparece; um clique nela de novo esconde. Fica salvo.
+- Ordem das abas: Baixar, Fila, Plugins, as abas dos plugins na ordem da pasta, Debug (quando liberada) e Logs sempre por último. Plugin desabilitado e reabilitado volta pra posição original entre os outros, não pro fim.
+
 ## [1.6.0] — 2026-09-14
 
 ### Adicionado

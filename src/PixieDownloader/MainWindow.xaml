@@ -98,7 +98,8 @@
         </Border>
 
         <!-- ═══════════ Tabs ═══════════ -->
-        <!-- Tabs contributed by plugins are inserted between "Fila" and "Plugins" at runtime (MainWindow.WirePluginTabs). -->
+        <!-- Baixar · Fila · Plugins · [plugin tabs, inserted at runtime by MainWindow.WirePluginTabs in the folder's order]
+             · Debug / Tests (only while enabled through the status-bar dot) · Logs, always last. -->
         <TabControl x:Name="MainTabs" Grid.Row="1" Margin="16,12,16,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
             <TabItem Header="Baixar">
                 <Grid Margin="0,4,0,0">
@@ -413,7 +414,8 @@
                 <views:PluginsPanel Margin="0,4,0,0"/>
             </TabItem>
 
-            <TabItem Header="Debug / Tests">
+            <TabItem x:Name="DebugTab" Header="Debug / Tests"
+                     Visibility="{Binding Settings.Ui.DebugPanelEnabled, Converter={StaticResource BoolToVis}}">
                 <views:DebugPanel Margin="0,4,0,0"/>
             </TabItem>
 
@@ -454,6 +456,10 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- The debug dot: red = the Debug / Tests tab is hidden, green = shown. Press and hold it for
+                         five seconds to enable; one click while green hides it again. Unlabelled on purpose. -->
+                    <Ellipse x:Name="DebugDot" Width="9" Height="9" VerticalAlignment="Center" Margin="0,0,12,0"
+                             MouseLeftButtonDown="OnDebugDotMouseDown" MouseLeftButtonUp="OnDebugDotMouseUp" MouseLeave="OnDebugDotMouseLeave"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,12,0" ToolTip="{Binding YtDlp.Tooltip}">
                         <Ellipse Width="9" Height="9" VerticalAlignment="Center"
                                  Fill="{Binding YtDlp.GlyphColorKey, Converter={StaticResource ResBrush}}"/>

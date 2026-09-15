@@ -3,7 +3,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using System.Windows.Shell;
 using Microsoft.Win32;
 using PixieDownloader.Plugins;
@@ -33,6 +36,7 @@ public partial class MainWindow : Window
 
         WireInteractions();
         WirePluginTabs();
+        UpdateDebugDot();
 
         Loaded += OnLoadedAsync;
         Closing += OnClosing;
@@ -124,12 +128,11 @@ public partial class MainWindow : Window
     }
 
     // ───── Plugin tabs ─────
-    // One tab per loaded plugin that implements IUiContribution, between "Fila" and "Plugins": features first,
-    // then the tab that manages them, then diagnostics. Inserting there is safe because only the queue tab is
-    // addressed by index (MainViewModel.QueueTabIndex). The tab's Tag carries the plugin id so disabling can
-    // find it again.
-    private const int FirstPluginTabIndex = MainViewModel.QueueTabIndex + 1;
-    private int _pluginTabCount;
+    // One tab per loaded plugin that implements IUiContribution, right after "Plugins" and in the catalog's
+    // (the folder's) order — a plugin that comes back after being disabled returns to its own place, not to
+    // the end (PluginTabOrder). Debug and Logs stay behind them. Only the queue and plugins tabs are addressed
+    // by index. The tab's Tag carries the plugin id so disabling can find it again.
+    private const int FirstPluginTabIndex = MainViewModel.PluginsTabIndex + 1;
 
     private void WirePluginTabs()
     {
@@ -165,8 +168,9 @@ public partial class MainWindow : Window
         }
         content.Margin = new Thickness(0, 4, 0, 0);   // same top gap the built-in panels use
 
-        MainTabs.Items.Insert(FirstPluginTabIndex + _pluginTabCount, new TabItem { Header = header, Content = content, Tag = plugin.Id });
-        _pluginTabCount++;
+        var showing = MainTabs.Items.OfType<TabItem>().Select(t => t.Tag).OfType<string>();
+        var index = PluginTabOrder.InsertIndex(FirstPluginTabIndex, _vm.Plugins.Plugins, plugin, showing);
+        MainTabs.Items.Insert(index, new TabItem { Header = header, Content = content, Tag = plugin.Id });
     }
 
     private void RemovePluginTab(InstalledPlugin plugin)
@@ -177,8 +181,63 @@ public partial class MainWindow : Window
         if (ReferenceEquals(MainTabs.SelectedItem, tab))
             MainTabs.SelectedIndex = 0;
         MainTabs.Items.Remove(tab);
-        _pluginTabCount--;
     }
+
+    // ───── The debug dot ─────
+    // The Debug / Tests tab is hidden unless Settings.Ui.DebugPanelEnabled (the tab's Visibility is bound to
+    // it). The unlabelled dot at the left of the status-bar indicators toggles it: press and hold for five
+    // seconds to enable (a DispatcherTimer that a release or a mouse-leave cancels), a single click while
+    // enabled hides it again. The setting persists like any other.
+    private static readonly TimeSpan DebugHold = TimeSpan.FromSeconds(5);
+    private DispatcherTimer? _debugHold;
+    private bool _debugHoldCompleted;   // the release that ends a successful hold is not the click that turns it off
+
+    private void OnDebugDotMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _debugHoldCompleted = false;
+        if (_vm.Settings.Ui.DebugPanelEnabled)
+            return;   // enabled: the release is the click that turns it off
+        _debugHold = new DispatcherTimer { Interval = DebugHold };
+        _debugHold.Tick += (_, _) =>
+        {
+            CancelDebugHold();
+            _debugHoldCompleted = true;
+            SetDebugPanel(true);
+        };
+        _debugHold.Start();
+    }
+
+    private void OnDebugDotMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        var holding = _debugHold is not null;
+        CancelDebugHold();
+        if (_debugHoldCompleted)
+        {
+            _debugHoldCompleted = false;
+            return;
+        }
+        if (!holding && _vm.Settings.Ui.DebugPanelEnabled)
+            SetDebugPanel(false);
+    }
+
+    private void OnDebugDotMouseLeave(object sender, MouseEventArgs e) => CancelDebugHold();
+
+    private void CancelDebugHold()
+    {
+        _debugHold?.Stop();
+        _debugHold = null;
+    }
+
+    private void SetDebugPanel(bool enabled)
+    {
+        _vm.Settings.Ui.DebugPanelEnabled = enabled;
+        UpdateDebugDot();
+        if (!enabled && ReferenceEquals(MainTabs.SelectedItem, DebugTab))
+            MainTabs.SelectedIndex = 0;
+    }
+
+    private void UpdateDebugDot() =>
+        DebugDot.Fill = (Brush)FindResource(_vm.Settings.Ui.DebugPanelEnabled ? "Brush.Success" : "Brush.Error");
 
     private static void ShellOpen(string target)
     {
