@@ -262,6 +262,48 @@ public sealed class PluginCatalogTests : IDisposable
         Assert.Null(plugin.LoadContext);
     }
 
+    [Fact]
+    public void A_plugin_folder_holding_only_the_plugin_dll_loads_but_the_feature_needing_its_own_dependency_fails_logged()
+    {
+        // Just Pixie.Tracklist.dll: no TagLibSharp.dll, no deps.json, no runtimeconfig.
+        var dir = Path.Combine(PluginsDir, "tracklist");
+        Directory.CreateDirectory(dir);
+        File.Copy(Path.Combine(TracklistOutput, "Pixie.Tracklist.dll"), Path.Combine(dir, "Pixie.Tracklist.dll"));
+        var catalog = NewCatalog();
+        var logged = new List<LogEntry>();
+        catalog.LogEmitted += (_, e) => logged.Add(e);
+
+        catalog.Initialize();
+
+        // Detection and the tab don't touch TagLib#, so the plugin is up.
+        var plugin = Assert.Single(catalog.Plugins);
+        Assert.Equal(PluginStatus.Loaded, plugin.Status);
+
+        // An analysed video with a tracklist, then its "download": writing the chapters needs TagLib#.
+        var url = "https://www.youtube.com/watch?v=abc";
+        var video = new VideoInfo("abc", "Mix", null, TimeSpan.FromSeconds(600), null, url)
+        {
+            Metadata = new Dictionary<string, string>
+            {
+                ["description"] = "Tracklist:" + "\n00:00 Artist A - Song One" + "\n03:45 Artist B - Song Two" + "\n07:30 Artist C - Song Three",
+            },
+        };
+        catalog.RaiseAnalysisCompleted(url, new VideoUrlInfo { OriginalUrl = url, Video = video });
+        Assert.Contains(logged, e => e.Source == "Plugin:tracklist" && e.Message.StartsWith("3 faixas"));
+
+        var mp3 = Path.Combine(_root, "mix.mp3");
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "Fixtures", "silence.mp3"), mp3);
+        catalog.RaiseDownloadCompleted(new DownloadRequest(url, _root, "%(title)s.%(ext)s", new AudioOptions(), new AdvancedOptions()),
+                                       new DownloadResult(url, true, mp3, null, TimeSpan.Zero));
+
+        // The write runs on a background task; it must end in the plugin's own error line, nothing else.
+        Assert.True(SpinWait.SpinUntil(() => logged.Any(e => e.Level == LogLevel.Error), TimeSpan.FromSeconds(15)), "the plugin never reported");
+        var error = Assert.Single(logged, e => e.Level == LogLevel.Error);
+        Assert.Equal("Plugin:tracklist", error.Source);
+        Assert.Contains("TagLibSharp", error.Message);
+        Assert.Equal(PluginStatus.Loaded, plugin.Status);   // still up: only that feature failed
+    }
+
     // ───── Rescan ─────
 
     [Fact]

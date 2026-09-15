@@ -30,6 +30,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The tracklist tests' 1 s MP3, for the "plugin without its own dependency" test. -->
+    <None Include="..\Pixie.Tracklist.Tests\Fixtures\silence.mp3" Link="Fixtures\silence.mp3" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Where the built Hello plugin is, for the same Configuration; read back through AssemblyMetadataAttribute. -->
     <AssemblyMetadata Include="HelloPluginOutput" Value="$(MSBuildThisFileDirectory)..\..\src\Plugins\Pixie.Hello\bin\$(Configuration)\net10.0-windows\" />
     <AssemblyMetadata Include="TracklistPluginOutput" Value="$(MSBuildThisFileDirectory)..\..\src\Plugins\Pixie.Tracklist\bin\$(Configuration)\net10.0-windows\" />
