@@ -26,16 +26,16 @@
             <TextBlock DockPanel.Dock="Top" Margin="0,0,0,10" Style="{StaticResource Hint}" TextWrapping="Wrap"
                        Text="Um plugin é um .dll solto em plugins\ (ao lado do .exe) ou, se traz dependências, uma pasta própria ali dentro. Desabilitar tem efeito na hora: a aba some e o plugin para. Desinstalar remove o arquivo ou a pasta no próximo start do app — até lá dá pra desfazer."/>
 
-            <Grid>
-                <!-- Empty state -->
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                            Visibility="{Binding PluginItems.Count, Converter={StaticResource ZeroToVis}}">
-                    <TextBlock Text="Nenhum plugin instalado." Style="{StaticResource Hint}" HorizontalAlignment="Center"/>
-                    <TextBlock Text="{Binding PluginsDirectory}" Style="{StaticResource Hint}" HorizontalAlignment="Center" Margin="0,4,0,0"
-                               FontFamily="{StaticResource Font.Mono}" FontSize="11"/>
-                </StackPanel>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <!-- Empty state -->
+                    <StackPanel HorizontalAlignment="Center" Margin="0,24,0,12"
+                                Visibility="{Binding PluginItems.Count, Converter={StaticResource ZeroToVis}}">
+                        <TextBlock Text="Nenhum plugin instalado." Style="{StaticResource Hint}" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding PluginsDirectory}" Style="{StaticResource Hint}" HorizontalAlignment="Center" Margin="0,4,0,0"
+                                   FontFamily="{StaticResource Font.Mono}" FontSize="11"/>
+                    </StackPanel>
 
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <ItemsControl ItemsSource="{Binding PluginItems}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:PluginItemViewModel}">
@@ -59,6 +59,9 @@
                                                        Foreground="{Binding StatusBrushKey, Converter={StaticResource ResBrush}}"/>
                                             <TextBlock Text="{Binding Detail}" Style="{StaticResource Hint}" Margin="0,2,0,0" TextWrapping="Wrap"
                                                        Visibility="{Binding HasDetail, Converter={StaticResource BoolToVis}}"/>
+                                            <TextBlock Text="{Binding PendingUpdateText}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                       Foreground="{StaticResource Brush.Warning}"
+                                                       Visibility="{Binding HasPendingUpdate, Converter={StaticResource BoolToVis}}"/>
                                         </StackPanel>
 
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
@@ -92,8 +95,58 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                </ScrollViewer>
-            </Grid>
+
+                    <!-- ───── Plugins oficiais: what the latest release ships, installable from here ───── -->
+                    <DockPanel Margin="0,18,0,4">
+                        <Button DockPanel.Dock="Right" Content="Buscar de novo" Style="{StaticResource GhostButton}" Padding="10,5"
+                                Command="{Binding RefreshStoreCommand}"
+                                ToolTip="{Binding StoreCatalogUrl}"/>
+                        <TextBlock Text="Plugins oficiais" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+                    </DockPanel>
+                    <TextBlock Text="{Binding StoreStatus}" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+                    <ItemsControl ItemsSource="{Binding StoreItems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:StorePluginViewModel}">
+                                <Border BorderThickness="4,0,0,0" BorderBrush="{Binding StatusBrushKey, Converter={StaticResource ResBrush}}"
+                                        Padding="10,8" Margin="0,1" CornerRadius="4" Background="Transparent">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <TextBlock DockPanel.Dock="Left" Text="{Binding VersionLabel}" Style="{StaticResource Hint}"
+                                                           Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding Id}" Style="{StaticResource Hint}" FontFamily="{StaticResource Font.Mono}" FontSize="11"
+                                                           Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding Description}" Style="{StaticResource Hint}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                       Visibility="{Binding HasDescription, Converter={StaticResource BoolToVis}}"/>
+                                            <TextBlock Text="{Binding StatusText}" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"
+                                                       Foreground="{Binding StatusBrushKey, Converter={StaticResource ResBrush}}"/>
+                                            <ProgressBar Value="{Binding Progress, Mode=OneWay}" Maximum="100" Height="4" Margin="0,6,0,0"
+                                                         Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"/>
+                                            <TextBlock Text="{Binding Error}" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap"
+                                                       Foreground="{StaticResource Brush.Error}"
+                                                       Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}"/>
+                                        </StackPanel>
+
+                                        <Button Grid.Column="1" Content="{Binding ActionText}" Padding="12,4" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                Visibility="{Binding HasAction, Converter={StaticResource BoolToVis}}"
+                                                ToolTip="Baixa o zip da release, confere o SHA256 e instala em plugins\ — se a versão atual estiver em uso, a nova entra no próximo start"
+                                                Command="{Binding DataContext.InstallStorePluginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
         </DockPanel>
     </Border>
 </UserControl>

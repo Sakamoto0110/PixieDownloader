@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -21,6 +22,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly SettingsService _settings;
     private readonly SessionLogger _logger;
     private readonly PluginCatalog _plugins;
+    private readonly PluginStore _store;
     private readonly Dispatcher _dispatcher;
 
     private CancellationTokenSource? _analyzeCts;
@@ -32,17 +34,18 @@ public sealed class MainViewModel : ObservableObject
     private string? _importFolder;       // output subfolder name for the imported list (null = output dir itself)
     private bool _importNumbered;        // imported rows get a "N - " file-name prefix (N = position in the list)
 
-    public MainViewModel(IYtDlpService service, SettingsService settings, SessionLogger logger, PluginCatalog plugins)
+    public MainViewModel(IYtDlpService service, SettingsService settings, SessionLogger logger, PluginCatalog plugins, PluginStore store)
     {
         _service = service;
         _settings = settings;
         _logger = logger;
         _plugins = plugins;
+        _store = store;
         _dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
         // Plugins load before the window exists; listening from the start keeps their load lines in the Logs tab,
         // and the Plugins tab rebuilds its rows on every status change (Initialize included).
         _plugins.LogEmitted += OnLogEmitted;
-        _plugins.Changed += (_, _) => RefreshPluginItems();
+        _plugins.Changed += (_, _) => { RefreshPluginItems(); RefreshStoreStates(); };
 
         // ───────────────────────── Commands ─────────────────────────
         AddTokenCommand = new RelayCommand<TokenOption>(AddToken);
@@ -84,6 +87,8 @@ public sealed class MainViewModel : ObservableObject
         OpenPluginFolderCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) OpenFolderPath?.Invoke(p.Directory); });
         OpenPluginsFolderCommand = new RelayCommand(() => OpenFolderPath?.Invoke(_plugins.PluginsDirectory));
         RescanPluginsCommand = new RelayCommand(_plugins.Rescan);
+        RefreshStoreCommand = new AsyncRelayCommand(RefreshStoreAsync, () => !StoreBusy);
+        InstallStorePluginCommand = new RelayCommand<StorePluginViewModel>(p => { if (p is not null) _ = InstallStorePluginAsync(p); }, p => p?.CanAct == true);
         OpenReleasePageCommand = new RelayCommand(OpenReleasePage);
         SimulateCommand = new AsyncRelayCommand(Simulate);
         GetFilenameCommand = new AsyncRelayCommand(GetFilename);
@@ -170,6 +175,8 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand<PluginItemViewModel> OpenPluginFolderCommand { get; }
     public RelayCommand OpenPluginsFolderCommand { get; }
     public RelayCommand RescanPluginsCommand { get; }
+    public AsyncRelayCommand RefreshStoreCommand { get; }
+    public RelayCommand<StorePluginViewModel> InstallStorePluginCommand { get; }
     public RelayCommand OpenReleasePageCommand { get; }
     public AsyncRelayCommand SimulateCommand { get; }
     public AsyncRelayCommand GetFilenameCommand { get; }
@@ -982,6 +989,113 @@ public sealed class MainViewModel : ObservableObject
         PluginItems.Clear();
         foreach (var plugin in _plugins.Plugins)
             PluginItems.Add(new PluginItemViewModel(plugin));
+    }
+
+    // ───────────────────────── Plugin store ─────────────────────────
+    // "Plugins oficiais": the plugins the latest GitHub Release ships, from the plugins.json the release
+    // script writes next to their zips (PluginStore). Fetched the first time the Plugins tab shows (the view
+    // calls EnsureStoreLoaded), again on "Buscar de novo". Each row is a catalog entry plus what the local
+    // catalog says about it — recomputed on every PluginCatalog.Changed, so an install flips its own row.
+    // Install = download + verify + unpack (the store) and then PluginCatalog.Install, which either loads it
+    // now or, when the current version is in use, parks it for the next start. Offline just says so here.
+
+    private bool _storeLoaded;
+    private bool _storeBusy;
+    private string _storeStatus = "";
+
+    public ObservableCollection<StorePluginViewModel> StoreItems { get; } = [];
+
+    /// <summary>One line under the "Plugins oficiais" title: fetching, what was found, or why nothing was.</summary>
+    public string StoreStatus { get => _storeStatus; private set => SetProperty(ref _storeStatus, value); }
+
+    public bool StoreBusy { get => _storeBusy; private set => SetProperty(ref _storeBusy, value); }
+
+    /// <summary>Where the catalog comes from, for the tooltip — the GitHub release unless settings say otherwise.</summary>
+    public string StoreCatalogUrl => _store.CatalogUrl.ToString();
+
+    /// <summary>The view calls this when the Plugins tab shows: fetch once, and again after a failure, never while fetching.</summary>
+    public void EnsureStoreLoaded()
+    {
+        if (!_storeLoaded && !StoreBusy)
+            _ = RefreshStoreAsync();
+    }
+
+    private async Task RefreshStoreAsync()
+    {
+        StoreBusy = true;
+        StoreStatus = "Buscando o catálogo…";
+        try
+        {
+            var catalog = await _store.FetchCatalogAsync(CancellationToken.None);
+            StoreItems.Clear();
+            foreach (var entry in catalog.Plugins)
+                StoreItems.Add(new StorePluginViewModel(entry));
+            RefreshStoreStates();
+            _storeLoaded = true;
+            var release = string.IsNullOrWhiteSpace(catalog.App) ? "" : $" (release {catalog.App})";
+            StoreStatus = StoreItems.Count == 0
+                ? $"A última release não traz plugins{release}."
+                : $"{StoreItems.Count} plugin(s) na última release{release}.";
+        }
+        catch (PluginStoreException ex)
+        {
+            StoreStatus = $"Catálogo indisponível: {ex.Message}.";
+        }
+        catch (HttpRequestException ex)
+        {
+            StoreStatus = $"Sem acesso ao catálogo ({ex.Message}). Verifique a conexão e clique em Buscar de novo.";
+        }
+        catch (TaskCanceledException)
+        {
+            StoreStatus = "O catálogo demorou demais para responder. Clique em Buscar de novo.";
+        }
+        catch (Exception ex)
+        {
+            StoreStatus = $"Não consegui ler o catálogo: {ex.Message}";
+            _plugins.Emit(LogEntry.Now(LogLevel.Error, "Plugins", $"catálogo da loja: {ex.Message}", ex: ex));
+        }
+        finally
+        {
+            StoreBusy = false;
+        }
+    }
+
+    /// <summary>Each store row against the installed plugin of the same id (if any) — the catalog is the truth about what is on disk.</summary>
+    private void RefreshStoreStates()
+    {
+        foreach (var row in StoreItems)
+            row.Refresh(_plugins.Find(row.Id));
+    }
+
+    private async Task InstallStorePluginAsync(StorePluginViewModel row)
+    {
+        if (!row.CanAct)
+            return;
+        row.IsBusy = true;
+        row.Error = null;
+        row.Progress = 0;
+        try
+        {
+            using var staged = await _store.DownloadAsync(row.Entry, new Progress<double>(p => row.Progress = p), CancellationToken.None);
+            _plugins.Install(staged.Folder);   // raises Changed → RefreshStoreStates flips this row
+        }
+        catch (PluginStoreException ex)
+        {
+            row.Error = ex.Message;
+        }
+        catch (HttpRequestException ex)
+        {
+            row.Error = $"não consegui baixar: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            row.Error = ex.Message;
+            _plugins.Emit(LogEntry.Now(LogLevel.Error, "Plugins", $"instalar '{row.Id}': {ex.Message}", ex: ex));
+        }
+        finally
+        {
+            row.IsBusy = false;
+        }
     }
 
     // ───────────────────────── Debug tab ─────────────────────────

@@ -10,6 +10,8 @@
     PixieDownloader-vX.Y.Z-win-x64-portable.zip   .exe com o .NET dentro, roda em Windows pelado
     PixieDownloader.Sdk.A.B.C.nupkg               o SDK pra escrever plugins (versão própria = apiVersion, não a do app)
     PixieDownloader-plugin-tracktracer-vA.B.C.zip o plugin TrackTracer (versão própria); extrai em plugins\ ao lado do .exe
+    plugins.json                                  o catálogo dos plugins desta release (id, nome, versão, API, descrição,
+                                                  zip, sha256) — a aba Plugins do app lê de releases/latest/download/
     SHA256SUMS.txt                                hash de todos (formato do sha256sum)
     RELEASE_NOTES.md                              tabela dos assets, usada pelo workflow no corpo da release
 
@@ -117,8 +119,9 @@ foreach ($f in $flavors) {
         ""
         "Em uso, o app cria ao lado do .exe: settings.json, tools\, cache\, logs\, plugins\, data\, .~downloads\ e pending-downloads.txt."
         ""
-        "Plugins: extraia o zip de um plugin (ex.: PixieDownloader-plugin-tracktracer-*.zip, na mesma release) dentro de plugins\"
-        "e reabra o app; a aba Plugins liga, desliga e desinstala cada um."
+        "Plugins: a aba Plugins lista os oficiais da última release e instala com um clique (precisa de internet)."
+        "Ou extraia o zip de um plugin (ex.: PixieDownloader-plugin-tracktracer-*.zip, na mesma release) dentro de"
+        "plugins\ e reabra o app; a aba liga, desliga e desinstala cada um."
     ) -join "`r`n")
 
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
@@ -146,11 +149,19 @@ $notes += "| ``$nupkgName`` | SDK pra escrever plugins (``PackageReference``), n
 Write-Host ("  {0,-45} {1,6:N1} MB  {2}" -f $nupkgName, ((Get-Item $nupkgPath).Length / 1MB), $hash)
 
 # Os plugins: o build Release do passo 1 já os deixou prontos (e testados). Cada zip abre numa pasta com o
-# id do plugin, pra extrair direto em plugins\ ao lado do .exe. Sem .pdb.
+# id do plugin, pra extrair direto em plugins\ ao lado do .exe. Sem .pdb. Cada um também vira uma entrada do
+# plugins.json (abaixo), que é o que a aba Plugins do app lê pra oferecer "Instalar".
+$apiVersion = ($sdkVersion -split '\.')[0..1] -join '.'   # os plugins do repo compilam contra o Sdk do repo
+$catalogEntries = @()
 foreach ($pl in $plugins) {
     $plVersion = (Select-String -Path $pl.Proj -Pattern '<Version>([^<]+)</Version>').Matches[0].Groups[1].Value.Trim()
     if (-not $plVersion) { throw "Não achei <Version> em $($pl.Proj)" }
     if (-not (Test-Path (Join-Path $pl.Out $pl.Dll))) { throw "O plugin $($pl.Id) não foi buildado em $($pl.Out)" }
+    # Nome e descrição vêm do csproj (AssemblyTitle é o que a aba Plugins mostra; Description é o texto da loja).
+    $titleMatch = Select-String -Path $pl.Proj -Pattern '<AssemblyTitle>([^<]+)</AssemblyTitle>'
+    $plName = if ($titleMatch) { $titleMatch.Matches[0].Groups[1].Value.Trim() } else { $pl.Name }
+    $descMatch = Select-String -Path $pl.Proj -Pattern '<Description>([^<]+)</Description>'
+    $plDescription = if ($descMatch) { $descMatch.Matches[0].Groups[1].Value.Trim() } else { '' }
     $zipName = "PixieDownloader-plugin-$($pl.Id)-v$plVersion.zip"
     $zipPath = Join-Path $OutDir $zipName
     $stage   = Join-Path $OutDir "stage-plugin-$($pl.Id)"
@@ -164,15 +175,31 @@ foreach ($pl in $plugins) {
 
     $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $sums += "$hash  $zipName"
-    $notes += "| ``$zipName`` | Plugin **$($pl.Name)** $plVersion — extraia dentro de ``plugins\`` ao lado do .exe e reabra o app | ``$hash`` |"
+    $notes += "| ``$zipName`` | Plugin **$plName** $plVersion — instale pela aba Plugins do app, ou extraia dentro de ``plugins\`` ao lado do .exe e reabra | ``$hash`` |"
     Write-Host ("  {0,-45} {1,6:N1} MB  {2}" -f $zipName, ((Get-Item $zipPath).Length / 1MB), $hash)
+    $catalogEntries += [ordered]@{
+        id = $pl.Id; name = $plName; version = $plVersion; apiVersion = $apiVersion; description = $plDescription
+        asset = $zipName; sha256 = $hash; size = (Get-Item $zipPath).Length
+    }
 }
+
+# O catálogo da loja: o app baixa releases/latest/download/plugins.json, mostra cada entrada em "Plugins
+# oficiais" e instala o zip conferindo o sha256 — mesma release, mesmo hash do SHA256SUMS.txt, nada escrito à
+# mão. schemaVersion muda se o formato mudar de um jeito que um app antigo não entenda (PluginStore recusa).
+$catalog = [ordered]@{ schemaVersion = 1; app = $Version; plugins = @($catalogEntries) }
+$catalogName = 'plugins.json'
+$catalogPath = Join-Path $OutDir $catalogName
+Write-Utf8 $catalogPath ((ConvertTo-Json $catalog -Depth 5) + "`n")
+$hash = (Get-FileHash $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$sums += "$hash  $catalogName"
+$notes += "| ``$catalogName`` | O catálogo que a aba Plugins do app lê (não precisa baixar) | ``$hash`` |"
+Write-Host ("  {0,-45} {1,6:N1} KB  {2}" -f $catalogName, ((Get-Item $catalogPath).Length / 1KB), $hash)
 
 # ───── 4. SHA256SUMS + notas (bloco da versão no CHANGELOG.md, se houver, seguido da tabela de assets) ─────
 Step '4/4 SHA256SUMS.txt + RELEASE_NOTES.md'
 Write-Utf8 (Join-Path $OutDir 'SHA256SUMS.txt') (($sums -join "`n") + "`n")
 $notes += ""
-$notes += "Os dois .zip do app trazem só o app: na primeira abertura ele baixa o yt-dlp e o ffmpeg sozinho (precisa de internet). Plugin é opcional: extraia o zip dele em ``plugins\`` ao lado do .exe. O .nupkg é o SDK pra escrever plugins (versão própria, o apiVersion). Confira os hashes com ``SHA256SUMS.txt``."
+$notes += "Os dois .zip do app trazem só o app: na primeira abertura ele baixa o yt-dlp e o ffmpeg sozinho (precisa de internet). Plugin é opcional: instale pela aba Plugins do app, ou extraia o zip dele em ``plugins\`` ao lado do .exe. O .nupkg é o SDK pra escrever plugins (versão própria, o apiVersion). Confira os hashes com ``SHA256SUMS.txt``."
 
 $changelog = @()
 $changelogPath = Join-Path $repo 'CHANGELOG.md'

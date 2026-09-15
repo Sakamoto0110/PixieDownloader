@@ -75,7 +75,7 @@ public sealed class TracklistPayload
     /// <summary>
     /// The 1.6 tree: the analysed video as the root playlist, one child per detected track. A track that
     /// carries a link is left <see cref="NodeState.Unresolved"/> — it may itself be a mix — and a plain one is
-    /// <see cref="NodeState.Empty"/>; nothing is expanded until 1.7 unlocks the depth.
+    /// <see cref="NodeState.Empty"/>; nothing is expanded until 1.8 unlocks the depth.
     /// </summary>
     public static TracklistPayload From(VideoInfo video, Tracklist list)
     {

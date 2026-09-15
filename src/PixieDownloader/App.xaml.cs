@@ -20,6 +20,7 @@ public partial class App : Application
     private SettingsService? _settings;
     private YtDlpService? _ytDlpService;
     private PluginCatalog? _plugins;
+    private PluginStore? _store;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -46,11 +47,14 @@ public partial class App : Application
         _settings.LoadAsync().GetAwaiter().GetResult();
 
         _ytDlpService = new YtDlpService(_logger, appVersion: AppInfo.Version);
+        var pluginsDirectory = Path.Combine(AppContext.BaseDirectory, "plugins");
         _plugins = new PluginCatalog(
-            pluginsDirectory: Path.Combine(AppContext.BaseDirectory, "plugins"),
+            pluginsDirectory,
             dataDirectory: Path.Combine(AppContext.BaseDirectory, "data"),
             _ytDlpService, _settings.Current.Plugins, _logger);
-        var viewModel = new MainViewModel(_ytDlpService, _settings, _logger, _plugins);
+        // The official plugins come from the latest GitHub Release (or wherever settings point); same UA as the service.
+        _store = new PluginStore(PluginStore.ResolveCatalogUrl(_settings.Current.Plugins.CatalogUrl), pluginsDirectory, $"PixieDownloader/{AppInfo.Version}");
+        var viewModel = new MainViewModel(_ytDlpService, _settings, _logger, _plugins, _store);
 
         // Plugins get their Configure here, on the UI thread, before the window exists; the window then
         // builds a tab for each one that has a UI. The VM is already listening, so their log lines land in the Logs tab.
@@ -91,6 +95,7 @@ public partial class App : Application
     {
         // Dispose in reverse dependency order; the logger flushes its JSON last.
         _plugins?.ShutdownAll();
+        _store?.Dispose();
         _settings?.Dispose();
         _ytDlpService?.Dispose();
         _logger?.Dispose();

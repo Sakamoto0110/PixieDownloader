@@ -1,5 +1,6 @@
 # Release do PixieDownloader: `git tag v1.4.0 && git push origin v1.4.0` cria a GitHub Release com os dois .zip,
-# o zip de cada plugin e o .nupkg do SDK, e em seguida chama publish-nuget.yml (workflow reutilizável) pra
+# o zip de cada plugin, o plugins.json (o catálogo que a aba Plugins do app lê de releases/latest/download/)
+# e o .nupkg do SDK, e em seguida chama publish-nuget.yml (workflow reutilizável) pra
 # publicar o SDK no nuget.org por Trusted Publishing. É uma chamada, não um gatilho `release: published`,
 # porque release criada com o GITHUB_TOKEN não dispara outros workflows; e é o mesmo arquivo que se roda à
 # mão, então a trust policy do nuget.org é uma só (publish-nuget.yml, environment release).
@@ -36,7 +37,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = '${{ github.ref_name }}'
-          $assets = @(Get-ChildItem bin/release/*.zip, bin/release/*.nupkg | ForEach-Object FullName) + @('bin/release/SHA256SUMS.txt')
+          $assets = @(Get-ChildItem bin/release/*.zip, bin/release/*.nupkg | ForEach-Object FullName) + @('bin/release/plugins.json', 'bin/release/SHA256SUMS.txt')
           gh release create $tag --verify-tag --title "PixieDownloader $($tag.TrimStart('v'))" --notes-file bin/release/RELEASE_NOTES.md --generate-notes @assets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

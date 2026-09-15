@@ -57,6 +57,7 @@ carregar código) e tira dali tudo que precisa —
 | nome | `<AssemblyTitle>` do csproj (sem ele, o id) |
 | versão | `<Version>` do csproj |
 | apiVersion | a versão deste pacote que você referenciou |
+| descrição | `<Description>` do csproj — só a loja usa (abaixo) |
 
 O host aceita o plugin quando o major do apiVersion é o mesmo e o minor não é
 mais novo que o dele — e recusa, com o motivo nos logs e na aba Plugins, antes
@@ -128,3 +129,14 @@ public sealed class HelloPlugin : IPixiePlugin, IUiContribution
   em uso até lá. `data/<id>/` fica: é do usuário.
 - **Recarregar** (aba Plugins) olha a pasta de novo sem reiniciar: plugin novo
   entra e carrega, um recusado com o problema corrigido também.
+- **Instalar pela aba** ("Plugins oficiais"): a aba lê o `plugins.json` da
+  última release do app (ou da URL em `Settings.Plugins.CatalogUrl`) e instala
+  o zip conferindo o SHA256 — o zip abre numa pasta com o id do plugin. Se a
+  versão atual estiver carregada, a nova espera em `plugins/.~update-<id>/` e
+  entra no próximo start. Um `plugins.json` seu tem a mesma forma que o da
+  release: `{ "schemaVersion": 1, "plugins": [ { "id", "name", "version",
+  "apiVersion", "description", "asset", "sha256" } ] }`, com os zips ao lado.
+- **`Configure` que lança** deixa o plugin como "Falhou ao carregar" com a
+  mensagem, e o host desfaz o que ele tinha feito (capacidades, pedido de
+  comentários, token cancelado) — Habilitar tenta de novo do zero. Um callback
+  em `ShutdownToken.Register` que lança vai pro log, não derruba o app.

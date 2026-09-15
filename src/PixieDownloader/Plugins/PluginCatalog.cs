@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Text.Json;
 using PixieDownloader.Sdk;
 using YtDlpCore;
@@ -17,6 +18,12 @@ public sealed class PluginCatalog
 {
     public const string ManifestFileName = "plugin.json";
     public const string UninstallMarkerFileName = ".uninstall";
+    /// <summary>
+    /// <c>plugins/.~update-&lt;id&gt;/</c>: a newer version the store downloaded while the current one was loaded
+    /// (its DLL is mapped until the process ends). The next <see cref="Initialize"/> swaps it in. Any folder
+    /// starting with a dot is the host's own and never listed as a plugin.
+    /// </summary>
+    public const string UpdateFolderPrefix = ".~update-";
     private const string LogSource = "Plugins";
 
     private static readonly JsonSerializerOptions ManifestJson = new()
@@ -71,6 +78,8 @@ public sealed class PluginCatalog
     {
         Directory.CreateDirectory(PluginsDirectory);
         ApplyPendingUninstalls();
+        ApplyStagedUpdates();
+        DropStagingLeftovers();
 
         foreach (var plugin in FindInstalled())
         {
@@ -78,6 +87,7 @@ public sealed class PluginCatalog
             _plugins.Add(plugin);
         }
         LoadPending();
+        RefreshPendingUpdates();
 
         if (_plugins.Count == 0)
             Emit(LogLevel.Debug, $"Nenhum plugin em {PluginsDirectory}.");
@@ -122,6 +132,7 @@ public sealed class PluginCatalog
         }
         _plugins.Sort((a, b) => string.Compare(a.Id, b.Id, StringComparison.OrdinalIgnoreCase));
         LoadPending();
+        RefreshPendingUpdates();
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -161,10 +172,90 @@ public sealed class PluginCatalog
     /// dependency rather than a plugin gets refused when read — the hint to give that plugin a folder.
     /// </summary>
     private List<InstalledPlugin> FindInstalled() =>
-        Directory.GetDirectories(PluginsDirectory).Select(InstalledPlugin.InFolder)
+        PluginFolders().Select(InstalledPlugin.InFolder)
             .Concat(Directory.GetFiles(PluginsDirectory, "*.dll").Select(InstalledPlugin.Loose))
             .OrderBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    /// <summary>The subfolders that are plugins: a dot-folder (<c>.~update-…</c>, the store's staging) is the host's own.</summary>
+    private IEnumerable<string> PluginFolders() =>
+        Directory.GetDirectories(PluginsDirectory).Where(d => !Path.GetFileName(d).StartsWith('.'));
+
+    private string UpdateFolder(string id) => Path.Combine(PluginsDirectory, UpdateFolderPrefix + id);
+
+    /// <summary>The version waiting in <c>plugins/.~update-&lt;id&gt;/</c>, read off its DLL; null when nothing waits.</summary>
+    private string? StagedUpdateVersion(string id) =>
+        Directory.Exists(UpdateFolder(id)) ? PluginManifestReader.TryRead(UpdateFolder(id), out _)?.Version : null;
+
+    private void RefreshPendingUpdates()
+    {
+        foreach (var plugin in _plugins)
+            plugin.PendingUpdateVersion = StagedUpdateVersion(plugin.Id);
+    }
+
+    /// <summary>Start of a run: what the store left in <c>.~update-&lt;id&gt;</c> takes the place of <c>&lt;id&gt;</c>, now that nothing holds its files.</summary>
+    private void ApplyStagedUpdates()
+    {
+        foreach (var staged in Directory.GetDirectories(PluginsDirectory, UpdateFolderPrefix + "*"))
+        {
+            var id = Path.GetFileName(staged)[UpdateFolderPrefix.Length..];
+            var target = Path.Combine(PluginsDirectory, id);
+            try
+            {
+                if (Directory.Exists(target))
+                    Directory.Delete(target, recursive: true);
+                Directory.Move(staged, target);
+                Emit(LogLevel.Info, $"Plugin '{id}' atualizado: a versão baixada entrou no lugar.");
+            }
+            catch (Exception ex)
+            {
+                // Still staged: the row keeps saying an update waits, and the next start tries again.
+                Emit(LogLevel.Warning, $"Não consegui aplicar a atualização do plugin '{id}': {ex.Message}. Fica para o próximo start.", ex);
+            }
+        }
+    }
+
+    /// <summary>A <c>.~store-…</c> folder at startup is a download the previous run never finished.</summary>
+    private void DropStagingLeftovers()
+    {
+        foreach (var staging in Directory.GetDirectories(PluginsDirectory, PluginStore.StagingPrefix + "*"))
+        {
+            try { Directory.Delete(staging, recursive: true); }
+            catch (Exception ex) { Emit(LogLevel.Warning, $"Não consegui apagar {staging}: {ex.Message}", ex); }
+        }
+    }
+
+    /// <summary>
+    /// The last step of a store install: the folder <see cref="PluginStore.DownloadAsync"/> verified and unpacked
+    /// (<c>plugins/.~store-…/&lt;id&gt;</c>) becomes <c>plugins/&lt;id&gt;/</c>. Now, when nothing of that id was
+    /// loaded this run — a plugin that is present but was never loaded has no file mapped, so its folder can be
+    /// replaced and the catalog rescans; a loaded one (disabled included: the assembly stays) keeps its files
+    /// until the process ends, so the new version waits in <c>.~update-&lt;id&gt;</c> for the next start.
+    /// </summary>
+    public PluginInstallOutcome Install(string stagedFolder)
+    {
+        var id = Path.GetFileName(stagedFolder);
+        var existing = Find(id);
+        if (existing?.LoadContext is not null)
+        {
+            var waiting = UpdateFolder(id);
+            if (Directory.Exists(waiting))
+                Directory.Delete(waiting, recursive: true);
+            Directory.Move(stagedFolder, waiting);
+            existing.PendingUpdateVersion = StagedUpdateVersion(id);
+            Emit(LogLevel.Info, $"Plugin '{id}' v{existing.PendingUpdateVersion} baixado: entra no próximo start (a versão atual está em uso).");
+            Changed?.Invoke(this, EventArgs.Empty);
+            return PluginInstallOutcome.PendingRestart;
+        }
+
+        var target = Path.Combine(PluginsDirectory, id);
+        if (Directory.Exists(target))
+            Directory.Delete(target, recursive: true);
+        Directory.Move(stagedFolder, target);
+        Emit(LogLevel.Info, $"Plugin '{id}' instalado em {target}.");
+        Rescan();
+        return PluginInstallOutcome.Installed;
+    }
 
     /// <summary>The uninstall marker: <c>.uninstall</c> inside a folder plugin, <c>&lt;name&gt;.dll.uninstall</c> next to a loose one.</summary>
     private static string MarkerPath(InstalledPlugin plugin) =>
@@ -172,7 +263,7 @@ public sealed class PluginCatalog
 
     private void ApplyPendingUninstalls()
     {
-        foreach (var dir in Directory.GetDirectories(PluginsDirectory))
+        foreach (var dir in PluginFolders())
         {
             if (!File.Exists(Path.Combine(dir, UninstallMarkerFileName)))
                 continue;
@@ -320,8 +411,11 @@ public sealed class PluginCatalog
             plugin.Instance = null;
             plugin.Host = null;
             plugin.Status = PluginStatus.Failed;
-            plugin.Detail = ex.Message;
-            Emit(LogLevel.Error, $"Plugin '{plugin.Id}' falhou ao carregar: {ex.Message}", ex);
+            // A constructor that throws reaches here wrapped by Activator ("Exception has been thrown by the
+            // target of an invocation"); what the row must say is the cause — a missing dependency, say.
+            var cause = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
+            plugin.Detail = cause.Message;
+            Emit(LogLevel.Error, $"Plugin '{plugin.Id}' falhou ao carregar: {cause.Message}", ex);
         }
     }
 

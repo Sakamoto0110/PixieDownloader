@@ -3,6 +3,22 @@
 Versões seguem o `<Version>` do `.csproj` e as tags `vX.Y.Z`; só o que foi publicado entra aqui.
 O bloco da versão é copiado para o corpo da GitHub Release pelo `scripts/release.ps1`.
 
+## [1.7.0] — 2026-09-15
+
+### Adicionado
+- **Plugins oficiais** na aba Plugins: a lista dos plugins da última release, com descrição, e um botão **Instalar** (ou **Atualizar**, quando o instalado é mais velho). O app baixa o zip da release, confere o SHA256 e verifica que é um plugin que esta versão carrega antes de colocá-lo em `plugins\`. Se a versão atual estiver em uso, a nova fica guardada e entra no próximo start — a linha avisa. Sem internet, a seção só diz que o catálogo não está disponível. A release passa a trazer o `plugins.json` que a aba lê; `plugins.catalogUrl` no `settings.json` aponta pra outro catálogo com a mesma forma.
+
+### Alterado
+- O plugin **Tracklist virou TrackTracer** (`PixieDownloader-plugin-tracktracer-vX.Y.Z.zip`, pasta `plugins\tracktracer\`): "rastreia as faixas" de um mix — o nome antigo era o do resultado, não do plugin. A aba continua "Tracklist". Quem tem `plugins\tracklist\` da 1.6 apaga a pasta e instala o novo (pela aba, agora).
+- A tracklist vai pro MP3 por uma cópia trocada no lugar do arquivo, nunca gravando por cima: fechar o app no segundo seguinte a um download não deixa mais um MP3 truncado — no pior caso, fica sem os capítulos.
+- Documentação do SDK: a regra de versão diz o que pode entrar num minor de cada lado (o que o host implementa cresce; o que o plugin implementa só ganha interface opcional nova) e que o `apiVersion` cobre o `YtDlpCore` junto.
+
+### Corrigido
+- Plugin cujo `Configure` lançava depois de registrar uma capacidade deixava a capacidade viva e o próprio **Habilitar** falhava por colidir com ela — agora um `Configure` que lança não deixa nada pra trás e a nova tentativa começa do zero. A mensagem de "Falhou ao carregar" passa a ser a causa de verdade, não o "Exception has been thrown by the target of an invocation" genérico.
+- Um plugin que registrasse uma capacidade de outra thread no instante do Desabilitar podia deixá-la registrada depois de desligado.
+- Um callback de `ShutdownToken` que lançasse derrubava o app ao Desabilitar ou ao fechar; vai pro log.
+- Handler de evento de plugin que segura a UI por mais de 250 ms é apontado nos logs.
+
 ## [1.6.1] — 2026-09-14
 
 ### Alterado

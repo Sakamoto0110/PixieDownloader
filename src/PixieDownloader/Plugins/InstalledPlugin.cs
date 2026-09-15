@@ -19,6 +19,15 @@ public enum PluginStatus
     PendingUninstall,
 }
 
+/// <summary>What <see cref="PluginCatalog.Install"/> did with the folder the store handed it.</summary>
+public enum PluginInstallOutcome
+{
+    /// <summary>In <c>plugins/&lt;id&gt;/</c> and rescanned — loaded unless the user had it disabled.</summary>
+    Installed,
+    /// <summary>The current version is loaded (its files are mapped), so the new one waits for the next start.</summary>
+    PendingRestart,
+}
+
 /// <summary>
 /// One plugin as found under <c>plugins/</c> — a folder (a plugin that carries dependencies of its own, kept
 /// apart so they never mix with anyone else's) or a single <c>.dll</c> loose in the root (a plugin that needs
@@ -61,6 +70,9 @@ public sealed class InstalledPlugin
 
     /// <summary>Why it is refused / failed / pending uninstall, for people. Null when there is nothing to explain.</summary>
     public string? Detail { get; internal set; }
+
+    /// <summary>The version the store downloaded into <c>plugins/.~update-&lt;id&gt;/</c>, waiting for the next start; null when none.</summary>
+    public string? PendingUpdateVersion { get; internal set; }
 
     public IPixiePlugin? Instance { get; internal set; }
 

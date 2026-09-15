@@ -29,6 +29,10 @@ public sealed class PluginItemViewModel : ObservableObject
     public string? Detail => Plugin.Detail;
     public bool HasDetail => !string.IsNullOrEmpty(Plugin.Detail);
 
+    /// <summary>When the store parked a newer version in <c>.~update-&lt;id&gt;</c>: it takes over at the next start.</summary>
+    public string? PendingUpdateText => Plugin.PendingUpdateVersion is { } v ? $"Atualização v{v} baixada — entra no próximo start do app" : null;
+    public bool HasPendingUpdate => Plugin.PendingUpdateVersion is not null;
+
     public string StatusText => Plugin.Status switch
     {
         PluginStatus.Loaded => Plugin.HasUi ? "Ativo — com aba" : "Ativo",

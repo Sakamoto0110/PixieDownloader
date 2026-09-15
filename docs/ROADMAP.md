@@ -1,4 +1,4 @@
-# PixieDownloader — arquitetura de plugins e roadmap 1.5 → 1.8
+# PixieDownloader — arquitetura de plugins e roadmap 1.5 → 1.9
 
 ![Arquitetura de plugins](pixie-arch.png)
 
@@ -89,6 +89,19 @@ são o mesmo número. O `release.ps1` gera o `.nupkg` e ele entra como asset da
 GitHub Release ao lado dos zips; consumir de lá é `dotnet nuget add source`.
 Publicar no nuget.org é uma linha a mais quando aparecer autor de fora — o id
 é permanente, então `PixieDownloader.Sdk` fica fixado desde já.
+
+**Os plugins oficiais chegam pela própria release (1.7).** O `release.ps1`
+escreve um `plugins.json` ao lado dos zips — id, nome, versão, apiVersion,
+descrição, nome do zip, sha256 — e o app lê `releases/latest/download/plugins.json`:
+sem API do GitHub, sem rate limit, e o release que tem os zips é o que os
+descreve, então lista e arquivos não desencontram. A aba Plugins mostra cada
+entrada com Instalar/Atualizar; o download confere o hash, abre num staging
+oculto dentro de `plugins/`, lê o manifesto do `.dll` e recusa apiVersion
+incompatível antes de encostar em `plugins/<id>/`. Plugin carregado tem o
+arquivo em uso até o processo morrer, então a atualização fica em
+`plugins/.~update-<id>/` e entra no próximo start — mesma regra do
+desinstalar. A URL do catálogo é configurável (`Settings.Plugins.CatalogUrl`):
+um catálogo privado funciona igual.
 
 ### Descoberta
 
@@ -288,7 +301,7 @@ JSON, escrever uma vez no fim do sync, não por item.
 
 ---
 
-## Módulo 3 — Discovery (1.8)
+## Módulo 3 — Discovery (1.9)
 
 Busca online: YouTube, SoundCloud, Spotify (só para sinalizar que existe),
 fontes obscuras. Direção oposta ao módulo 2 — não lê dele.
@@ -347,10 +360,22 @@ Por isso vem antes da aba, que é só UI.
    nota de faseamento abaixo: a 1.6 fechou com 1–4 e o módulo 2 ganha versão
    própria.
 
-O passo 2 é o que faz a 1.7 ser barata. Se `children` nascer plano, a 1.7 vira
+O passo 2 é o que faz a 1.8 ser barata. Se `children` nascer plano, a 1.8 vira
 migração de dados em vez de feature.
 
-### 1.7 — aninhamento
+### 1.7 — loja de plugins
+
+1. `plugins.json` gerado pela release, lido de `releases/latest/download/`
+2. "Plugins oficiais" na aba Plugins: instalar, atualizar, "entra no próximo
+   start" quando o atual está em uso
+3. O host endurecido antes disso: `Configure` que lança não deixa nada pra
+   trás, registro × shutdown decidido sob o lock, callback do token que lança
+   não derruba o app — a loja é o que vai fazer plugin falhar e reabilitar
+
+Entrou na frente do aninhamento porque distribuição é o que faz o modelo de
+plugin valer: sem ela, "vira plugin" é só uma pasta a mais pra copiar à mão.
+
+### 1.8 — aninhamento
 
 1. Destrava a profundidade
 2. Expansão lazy com detecção de ciclo
@@ -358,7 +383,7 @@ migração de dados em vez de feature.
 
 O formato não muda — é só UI e loader de camada.
 
-### 1.8 — Discovery
+### 1.9 — Discovery
 
 Módulo 3, com uma ou duas fontes fechadas em escopo, não "fontes obscuras" em
 geral. Cada fonte como sub-plugin desde o primeiro dia.
