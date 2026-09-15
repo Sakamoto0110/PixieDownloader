@@ -28,7 +28,7 @@
     <!-- The one place the app version lives. It becomes the exe's file/product version, the "v1.4.0" in -->
     <!-- the header (AppInfo.cs) and the yt-dlp service's User-Agent. Bump it when cutting a release; -->
     <!-- the GitHub release titles ("PixieDownloader 1.3") are the history so far — tags are Stable/Portable/Net10. -->
-    <Version>1.7.0</Version>
+    <Version>1.8.0</Version>
   </PropertyGroup>
 
   <!-- dotnet publish -c Release -> a single PixieDownloader.exe. Two flavours, picked by profile: -->

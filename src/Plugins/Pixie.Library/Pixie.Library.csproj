@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Module 2 of docs/ROADMAP.md — Library, the catalogue of what is already on disk: named folders pointing -->
+  <!-- at real ones, an index of every audio/video file under them (tags read once, re-read only where the file -->
+  <!-- changed), a "Biblioteca" tab with search and sort, and "open in the player you chose" instead of a player -->
+  <!-- of its own. What the app downloads joins the catalogue by itself. Installed as plugins/library/ next to -->
+  <!-- the exe; the release ships it as its own zip. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Pixie.Library</RootNamespace>
+    <!-- No plugin.json: the host reads id (folder), name, version, apiVersion and the entry class from the -->
+    <!-- assembly's metadata. So this is the plugin's version, AssemblyTitle is what the Plugins tab shows, and -->
+    <!-- Description is what the store ("Plugins oficiais") shows — release.ps1 copies it into plugins.json. -->
+    <Version>1.0.0</Version>
+    <AssemblyTitle>Library</AssemblyTitle>
+    <Description>Catálogo do que já está em disco: pastas nomeadas, busca por título/artista/arquivo, e abre no player que você escolher. O que o app baixa entra sozinho.</Description>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Shared with the host, never copied here (PluginLoadContext resolves both from the default context). -->
+    <ProjectReference Include="..\..\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj" Private="false" ExcludeAssets="runtime" />
+    <ProjectReference Include="..\..\YtDlpCore\YtDlpCore.csproj" Private="false" ExcludeAssets="runtime" />
+    <!-- The plugin's own dependency, landing next to it and resolved from there: another plugin may carry its -->
+    <!-- own TagLib# copy, and neither sees the other's. Reads title/artist/album/duration from MP3, MP4, FLAC, -->
+    <!-- Ogg/Opus, WAV, Matroska/WebM…, and counts the ID3 chapters a mix may carry. -->
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+    <None Include="THIRD-PARTY.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The tests drive the scanner, the manifest and the inbox (internal) directly. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Pixie.Library.Tests" />
+  </ItemGroup>
+
+  <!-- Dev convenience: mirror the build into the app's output as plugins/library/, so `dotnet run` has it. -->
+  <Target Name="CopyToAppPlugins" AfterTargets="Build">
+    <ItemGroup>
+      <_LibraryOutput Include="$(TargetDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_LibraryOutput)"
+          DestinationFolder="$(MSBuildThisFileDirectory)..\..\PixieDownloader\bin\$(Configuration)\net10.0-windows\plugins\library\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

@@ -1,4 +1,4 @@
-# PixieDownloader — arquitetura de plugins e roadmap 1.5 → 1.9
+# PixieDownloader — arquitetura de plugins e roadmap 1.5 → 1.10
 
 ![Arquitetura de plugins](pixie-arch.png)
 
@@ -235,9 +235,18 @@ interoperável para todo mundo, completo para o Pixie.
 
 ## Módulo 2 — Music local browser
 
-Catálogo do que já existe em disco. Virtual folders apontando para pastas
-reais. Sem player embutido — abre no programa externo configurado (VLC
-recomendado).
+O plugin `Pixie.Library` (id `library`, aba "Biblioteca"), saiu na 1.8.
+Catálogo do que já existe em disco. Pastas nomeadas apontando para pastas
+reais (uma pasta virtual = um nome + uma pasta real; árvore virtual fica
+para depois — o manifesto aceita um `parent` sem quebrar). Sem player
+embutido — abre no programa externo configurado (VLC recomendado) ou no que o
+Windows associa ao arquivo. Áudio e vídeo entram por padrão; o usuário
+acrescenta extensões (gif) e a extensão aparece em cada linha. Download
+concluído numa pasta fora do catálogo põe a pasta no catálogo (opção
+persistida, `autoAddRoots`).
+
+O que segue é o desenho original, com o que a implementação decidiu em
+itálico.
 
 ### Máquina de estados
 
@@ -254,6 +263,12 @@ status = sync ongoing    -> índice inconsistente, não confiar
 `sync ongoing` significa "índice inconsistente", **não** "arquivo em lock". O
 lock real dura milissegundos por escrita; o estado dura a varredura.
 
+*Implementado como `status` no `manifest.json`: `pending | synced | syncing |
+failed`. `disabled` virou a opção `autoSync` (desligada, só o botão varre; o
+que baixar continua entrando). Como o índice é gravado inteiro num rename só,
+`syncing` no disco ao abrir não significa índice pela metade — significa que a
+rodada morreu, e vira `failed` para forçar a varredura completa mesmo assim.*
+
 First init cria o JSON só com a flag, em `sync pending` — senão a primeira
 abertura mostra catálogo vazio.
 
@@ -268,6 +283,10 @@ pasta por fora.
 O sync só grava `synced` se a flag ainda estiver no valor que ele leu ao
 começar — compare-and-swap. Senão um download concluído no meio da varredura
 seria sobrescrito.
+
+*O CAS é por geração: cada flip para `pending` incrementa um contador; o sync
+guarda o valor ao começar e só grava `synced` se ele não mudou — senão fica
+`pending` e roda de novo, incremental, do índice que acabou de escrever.*
 
 `sync failed` fica reservado para varredura interrompida com índice pela
 metade: aí a aba força varredura completa em vez de incremental.
@@ -286,6 +305,13 @@ existe, e a interrupção despeja por completo. Não há estado parcial.
 O cache é **otimização, não fonte de verdade**. Perdê-lo num crash só faz o
 sync seguinte varrer um pouco mais. O `mtime` é a rede de segurança real.
 
+*Virou `data/library/inbox/`: um bloco JSON por arquivo entregue, escrito no
+`DownloadCompleted` por temp+rename. O sync dobra os blocos primeiro (as tags
+deles são as primeiras lidas e a aba mostra antes do resto), grava o índice e
+só então apaga os blocos. Bloco cujo arquivo não está sob raiz nenhuma é
+inofensivo. Não há hook de desinstalar; um bloco órfão é dobrado (sem efeito)
+e apagado na rodada seguinte.*
+
 ### Identidade de arquivo
 
 `(caminho, tamanho, mtime)` resolve quase tudo por `stat` puro. SHA completo de
@@ -296,6 +322,12 @@ custo constante.
 Índice separado do manifesto: manifesto é config legível, índice é dados. Se
 JSON, escrever uma vez no fim do sync, não por item.
 
+*Assim ficou: `manifest.json` indentado, `index.json` compacto, gravado uma vez
+por sync. A identidade é (caminho, tamanho, mtime); tag só é lida quando ela
+muda — na varredura completa também. Sem hash por enquanto (campo entra
+quando houver uso). `created` do arquivo é o "adicionado em", a ordem
+"Recentes". O índice guarda também um mtime por diretório visto.*
+
 ### Sync
 
 - Não bloqueia a abertura da aba. Mostra o índice anterior e sincroniza atrás.
@@ -303,9 +335,19 @@ JSON, escrever uma vez no fim do sync, não por item.
 - Um único sync por vez; aba que abre no meio se anexa ao que está rodando.
 - Processa o cache antes de varrer, para o recém-baixado aparecer primeiro.
 
+*Incremental por mtime de diretório de verdade: diretório com mtime igual ao
+do índice reusa as entradas e desce nos filhos conhecidos sem listar; o que
+mudou é listado. O preço aceito: arquivo reescrito no lugar (mesmo nome, sem
+rename) não muda o mtime da pasta e escapa até o botão Sincronizar (varredura
+completa). Download e a gravação por swap do TrackTracer fazem rename, então
+são pegos. Abrir a aba = um `stat` por diretório conhecido (`DirectoriesChanged`),
+no máximo a cada 5 s. Raiz ausente (HD desligado) mantém o que tinha e vira
+aviso. Um sync por vez; pedido durante a rodada é enfileirado e roda em seguida.
+Cancelar (plugin desabilitado, app fechando) deixa `failed`.*
+
 ---
 
-## Módulo 3 — Discovery (1.9)
+## Módulo 3 — Discovery (1.10)
 
 Busca online: YouTube, SoundCloud, Spotify (só para sinalizar que existe),
 fontes obscuras. Direção oposta ao módulo 2 — não lê dele.
@@ -379,7 +421,14 @@ migração de dados em vez de feature.
 Entrou na frente do aninhamento porque distribuição é o que faz o modelo de
 plugin valer: sem ela, "vira plugin" é só uma pasta a mais pra copiar à mão.
 
-### 1.8 — aninhamento
+### 1.8 — biblioteca local
+
+Módulo 2 como plugin (`Pixie.Library`), com a máquina de estados, o índice
+incremental e o cache em bloco descritos acima. Entrou antes do aninhamento
+porque fecha sozinho: não depende de fonte externa e o que o app baixa passa
+a ter onde aparecer.
+
+### 1.9 — aninhamento
 
 1. Destrava a profundidade
 2. Expansão lazy com detecção de ciclo
@@ -387,7 +436,7 @@ plugin valer: sem ela, "vira plugin" é só uma pasta a mais pra copiar à mão.
 
 O formato não muda — é só UI e loader de camada.
 
-### 1.9 — Discovery
+### 1.10 — Discovery
 
 Módulo 3, com uma ou duas fontes fechadas em escopo, não "fontes obscuras" em
 geral. Cada fonte como sub-plugin desde o primeiro dia.

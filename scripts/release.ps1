@@ -10,6 +10,7 @@
     PixieDownloader-vX.Y.Z-win-x64-portable.zip   .exe com o .NET dentro, roda em Windows pelado
     PixieDownloader.Sdk.A.B.C.nupkg               o SDK pra escrever plugins (versão própria = apiVersion, não a do app)
     PixieDownloader-plugin-tracktracer-vA.B.C.zip o plugin TrackTracer (versão própria); extrai em plugins\ ao lado do .exe
+    PixieDownloader-plugin-library-vA.B.C.zip     o plugin Library (versão própria); idem
     plugins.json                                  o catálogo dos plugins desta release (id, nome, versão, API, descrição,
                                                   zip, sha256) — a aba Plugins do app lê de releases/latest/download/
     SHA256SUMS.txt                                hash de todos (formato do sha256sum)
@@ -39,6 +40,7 @@ $sdkProj = Join-Path $repo 'src\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj'
 # Os plugins que saem na release, cada um como zip próprio (Hello é só de desenvolvimento e fica de fora).
 $plugins = @(
     @{ Id = 'tracktracer'; Name = 'TrackTracer'; Dll = 'Pixie.TrackTracer.dll'; Proj = Join-Path $repo 'src\Plugins\Pixie.TrackTracer\Pixie.TrackTracer.csproj'; Out = Join-Path $repo 'src\Plugins\Pixie.TrackTracer\bin\Release\net10.0-windows' }
+    @{ Id = 'library'; Name = 'Library'; Dll = 'Pixie.Library.dll'; Proj = Join-Path $repo 'src\Plugins\Pixie.Library\Pixie.Library.csproj'; Out = Join-Path $repo 'src\Plugins\Pixie.Library\bin\Release\net10.0-windows' }
 )
 $sln     = Join-Path $repo 'PixieDownloader.slnx'
 $license = Join-Path $repo 'LICENSE'
