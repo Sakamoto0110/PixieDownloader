@@ -1,4 +1,4 @@
-namespace Pixie.Tracklist.Detection;
+namespace Pixie.TrackTracer.Detection;
 
 /// <summary>Where a detected tracklist came from, in the order the extractor trusts them.</summary>
 public enum TracklistSource

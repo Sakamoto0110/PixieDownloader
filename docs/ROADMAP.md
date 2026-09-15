@@ -128,6 +128,10 @@ caminho normal, não exceção.
 
 ## Módulo 1 — Tracklist extractor
 
+O plugin `Pixie.TrackTracer` (id `tracktracer`): "rastreia as faixas" de um
+mix a partir do que escreveram em volta dele — não lê `.cue`, infere. Nasceu
+como `Pixie.Tracklist` na 1.6 e foi renomeado antes da 1.7.
+
 Ordem de busca: descrição → comentário fixado → comentário mais curtido
 (20 primeiros) → chapters como fallback.
 

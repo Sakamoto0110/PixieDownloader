@@ -3,7 +3,7 @@
 O contrato de plugin do [PixieDownloader](https://github.com/Sakamoto0110/PixieDownloader).
 Um plugin mora em `plugins/` ao lado do `PixieDownloader.exe` — **um `.dll`
 solto** quando ele não precisa de mais nada (`plugins/Pixie.Hello.dll`), ou
-**uma pasta própria** quando traz dependências (`plugins/tracklist/` com o
+**uma pasta própria** quando traz dependências (`plugins/tracktracer/` com o
 `TagLibSharp.dll` dele dentro), pra dependência de um nunca se misturar com
 outro. O app carrega cada um num `AssemblyLoadContext` próprio e conversa com
 o plugin só por estes tipos:

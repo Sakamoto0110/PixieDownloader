@@ -1,10 +1,10 @@
 using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
-using Pixie.Tracklist.Detection;
+using Pixie.TrackTracer.Detection;
 using YtDlpCore;
 
-namespace Pixie.Tracklist.Tests;
+namespace Pixie.TrackTracer.Tests;
 
 /// <summary>
 /// One fixture per real-world shape of tracklist, in <c>Fixtures/Tracklists/*.txt</c>. A fixture is the

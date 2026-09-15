@@ -1,21 +1,22 @@
 using System.IO;
 using System.Windows;
-using Pixie.Tracklist.Detection;
-using Pixie.Tracklist.Model;
-using Pixie.Tracklist.Tagging;
+using Pixie.TrackTracer.Detection;
+using Pixie.TrackTracer.Model;
+using Pixie.TrackTracer.Tagging;
 using PixieDownloader.Sdk;
 using YtDlpCore;
 
-namespace Pixie.Tracklist;
+namespace Pixie.TrackTracer;
 
 /// <summary>
-/// Module 1 of the roadmap. Every single-video analysis the app runs goes through the heuristic detector
-/// (description → pinned comment → uploader's comment → most liked → yt-dlp chapters as fallback); the
-/// "Tracklist" tab shows the candidates with their counts and lets the user pick one; and when that video
-/// downloads as an MP3, the chosen list goes into the file as ID3 chapters plus the full tree. The plugin
-/// never touches the host beyond <see cref="IPluginHost"/> and knows no other plugin.
+/// Module 1 of the roadmap — TrackTracer, because it traces the tracks of a mix from whatever people wrote
+/// around it. Every single-video analysis the app runs goes through the heuristic detector (description →
+/// pinned comment → uploader's comment → most liked → yt-dlp chapters as fallback); the "Tracklist" tab
+/// shows the candidates with their counts and lets the user pick one; and when that video downloads as an
+/// MP3, the chosen list goes into the file as ID3 chapters plus the full tree. The plugin never touches the
+/// host beyond <see cref="IPluginHost"/> and knows no other plugin.
 /// </summary>
-public sealed class TracklistPlugin : IPixiePlugin, IUiContribution
+public sealed class TrackTracerPlugin : IPixiePlugin, IUiContribution
 {
     private IPluginHost _host = null!;
     private readonly TracklistTabViewModel _tab = new();

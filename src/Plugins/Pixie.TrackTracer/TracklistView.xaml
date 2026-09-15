@@ -1,7 +1,7 @@
-<UserControl x:Class="Pixie.Tracklist.TracklistView"
+<UserControl x:Class="Pixie.TrackTracer.TracklistView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:Pixie.Tracklist">
+             xmlns:local="clr-namespace:Pixie.TrackTracer">
     <!-- Host styles by DynamicResource (the view is built before it is in the tree); the one converter it
          needs is WPF's own, kept here so the view stands on its own. -->
     <UserControl.Resources>

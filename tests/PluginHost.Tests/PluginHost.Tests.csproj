@@ -26,18 +26,18 @@
     <ProjectReference Include="..\..\src\PixieDownloader\PixieDownloader.csproj" />
     <!-- Built before the tests, never referenced: the tests copy its output into a plugins/ folder and load it from there. -->
     <ProjectReference Include="..\..\src\Plugins\Pixie.Hello\Pixie.Hello.csproj" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="..\..\src\Plugins\Pixie.Tracklist\Pixie.Tracklist.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\Plugins\Pixie.TrackTracer\Pixie.TrackTracer.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The tracklist tests' 1 s MP3, for the "plugin without its own dependency" test. -->
-    <None Include="..\Pixie.Tracklist.Tests\Fixtures\silence.mp3" Link="Fixtures\silence.mp3" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The TrackTracer tests' 1 s MP3, for the "plugin without its own dependency" test. -->
+    <None Include="..\Pixie.TrackTracer.Tests\Fixtures\silence.mp3" Link="Fixtures\silence.mp3" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- Where the built Hello plugin is, for the same Configuration; read back through AssemblyMetadataAttribute. -->
     <AssemblyMetadata Include="HelloPluginOutput" Value="$(MSBuildThisFileDirectory)..\..\src\Plugins\Pixie.Hello\bin\$(Configuration)\net10.0-windows\" />
-    <AssemblyMetadata Include="TracklistPluginOutput" Value="$(MSBuildThisFileDirectory)..\..\src\Plugins\Pixie.Tracklist\bin\$(Configuration)\net10.0-windows\" />
+    <AssemblyMetadata Include="TrackTracerPluginOutput" Value="$(MSBuildThisFileDirectory)..\..\src\Plugins\Pixie.TrackTracer\bin\$(Configuration)\net10.0-windows\" />
   </ItemGroup>
 
 </Project>

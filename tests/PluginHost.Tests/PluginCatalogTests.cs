@@ -20,7 +20,7 @@ public sealed class PluginCatalogTests : IDisposable
     private const string Quiet = "Pixie.Hello.QuietPlugin";     // its other entry type: Configure only, no tab, no capability
 
     private static readonly string HelloOutput = OutputOf("HelloPluginOutput");
-    private static readonly string TracklistOutput = OutputOf("TracklistPluginOutput");   // the real plugin: one entry class, no plugin.json
+    private static readonly string TrackTracerOutput = OutputOf("TrackTracerPluginOutput");   // the real plugin: one entry class, no plugin.json
 
     private static string OutputOf(string key) =>
         typeof(PluginCatalogTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == key).Value!;
@@ -228,7 +228,7 @@ public sealed class PluginCatalogTests : IDisposable
     [Fact]
     public void A_folder_without_plugin_json_is_described_by_its_assembly_and_loads()
     {
-        var dir = Install("tracklist", from: TracklistOutput);
+        var dir = Install("tracktracer", from: TrackTracerOutput);
         Assert.False(File.Exists(Path.Combine(dir, PluginCatalog.ManifestFileName)));
         var catalog = NewCatalog();
 
@@ -237,12 +237,12 @@ public sealed class PluginCatalogTests : IDisposable
         var plugin = Assert.Single(catalog.Plugins);
         Assert.Equal(PluginStatus.Loaded, plugin.Status);
         var m = plugin.Manifest!;
-        Assert.Equal("tracklist", m.Id);                              // the folder
-        Assert.Equal("Tracklist", m.Name);                            // <AssemblyTitle>
-        Assert.Equal("1.0.0", m.Version);                             // <Version>
+        Assert.Equal("tracktracer", m.Id);                                 // the folder
+        Assert.Equal("TrackTracer", m.Name);                               // <AssemblyTitle>
+        Assert.Equal("1.0.0", m.Version);                                  // <Version>
         Assert.Equal($"{SdkVersion.Current.Major}.{SdkVersion.Current.Minor}", m.ApiVersion);   // the Sdk it was compiled against
-        Assert.Equal("Pixie.Tracklist.dll", m.AssemblyFile);          // the one DLL referencing the Sdk (TagLibSharp.dll is skipped)
-        Assert.Equal("Pixie.Tracklist.TracklistPlugin", m.EntryType); // the one IPixiePlugin class
+        Assert.Equal("Pixie.TrackTracer.dll", m.AssemblyFile);             // the one DLL referencing the Sdk (TagLibSharp.dll is skipped)
+        Assert.Equal("Pixie.TrackTracer.TrackTracerPlugin", m.EntryType);  // the one IPixiePlugin class
         Assert.Empty(m.DependsOn);
         Assert.True(plugin.HasUi);
     }
@@ -265,10 +265,10 @@ public sealed class PluginCatalogTests : IDisposable
     [Fact]
     public void A_plugin_folder_holding_only_the_plugin_dll_loads_but_the_feature_needing_its_own_dependency_fails_logged()
     {
-        // Just Pixie.Tracklist.dll: no TagLibSharp.dll, no deps.json, no runtimeconfig.
-        var dir = Path.Combine(PluginsDir, "tracklist");
+        // Just Pixie.TrackTracer.dll: no TagLibSharp.dll, no deps.json, no runtimeconfig.
+        var dir = Path.Combine(PluginsDir, "tracktracer");
         Directory.CreateDirectory(dir);
-        File.Copy(Path.Combine(TracklistOutput, "Pixie.Tracklist.dll"), Path.Combine(dir, "Pixie.Tracklist.dll"));
+        File.Copy(Path.Combine(TrackTracerOutput, "Pixie.TrackTracer.dll"), Path.Combine(dir, "Pixie.TrackTracer.dll"));
         var catalog = NewCatalog();
         var logged = new List<LogEntry>();
         catalog.LogEmitted += (_, e) => logged.Add(e);
@@ -289,7 +289,7 @@ public sealed class PluginCatalogTests : IDisposable
             },
         };
         catalog.RaiseAnalysisCompleted(url, new VideoUrlInfo { OriginalUrl = url, Video = video });
-        Assert.Contains(logged, e => e.Source == "Plugin:tracklist" && e.Message.StartsWith("3 faixas"));
+        Assert.Contains(logged, e => e.Source == "Plugin:tracktracer" && e.Message.StartsWith("3 faixas"));
 
         var mp3 = Path.Combine(_root, "mix.mp3");
         File.Copy(Path.Combine(AppContext.BaseDirectory, "Fixtures", "silence.mp3"), mp3);
@@ -299,7 +299,7 @@ public sealed class PluginCatalogTests : IDisposable
         // The write runs on a background task; it must end in the plugin's own error line, nothing else.
         Assert.True(SpinWait.SpinUntil(() => logged.Any(e => e.Level == LogLevel.Error), TimeSpan.FromSeconds(15)), "the plugin never reported");
         var error = Assert.Single(logged, e => e.Level == LogLevel.Error);
-        Assert.Equal("Plugin:tracklist", error.Source);
+        Assert.Equal("Plugin:tracktracer", error.Source);
         Assert.Contains("TagLibSharp", error.Message);
         Assert.Equal(PluginStatus.Loaded, plugin.Status);   // still up: only that feature failed
     }
@@ -309,28 +309,28 @@ public sealed class PluginCatalogTests : IDisposable
     [Fact]
     public void A_dll_loose_in_the_root_is_a_plugin_named_after_the_file()
     {
-        var dll = Path.Combine(PluginsDir, "Pixie.Tracklist.dll");
+        var dll = Path.Combine(PluginsDir, "Pixie.TrackTracer.dll");
         Directory.CreateDirectory(PluginsDir);
-        File.Copy(Path.Combine(TracklistOutput, "Pixie.Tracklist.dll"), dll);
+        File.Copy(Path.Combine(TrackTracerOutput, "Pixie.TrackTracer.dll"), dll);
         var catalog = NewCatalog();
 
         catalog.Initialize();
 
         var plugin = Assert.Single(catalog.Plugins);
         Assert.True(plugin.IsLoose);
-        Assert.Equal("Pixie.Tracklist", plugin.Id);
+        Assert.Equal("Pixie.TrackTracer", plugin.Id);
         Assert.Equal(dll, plugin.Location);
         Assert.Equal(PluginsDir, plugin.Directory);
         Assert.Equal(PluginStatus.Loaded, plugin.Status);
-        Assert.Equal("Tracklist", plugin.Manifest!.Name);
-        Assert.Equal("plugin:Pixie.Tracklist", AssemblyLoadContext.GetLoadContext(plugin.Instance!.GetType().Assembly)!.Name);
+        Assert.Equal("TrackTracer", plugin.Manifest!.Name);
+        Assert.Equal("plugin:Pixie.TrackTracer", AssemblyLoadContext.GetLoadContext(plugin.Instance!.GetType().Assembly)!.Name);
     }
 
     [Fact]
     public void A_dependency_dll_loose_in_the_root_is_refused_with_the_hint_to_use_a_folder()
     {
         Directory.CreateDirectory(PluginsDir);
-        File.Copy(Path.Combine(TracklistOutput, "TagLibSharp.dll"), Path.Combine(PluginsDir, "TagLibSharp.dll"));
+        File.Copy(Path.Combine(TrackTracerOutput, "TagLibSharp.dll"), Path.Combine(PluginsDir, "TagLibSharp.dll"));
         var catalog = NewCatalog();
 
         catalog.Initialize();
@@ -344,15 +344,15 @@ public sealed class PluginCatalogTests : IDisposable
     public void A_loose_plugin_is_uninstalled_by_a_marker_next_to_it_and_deleted_on_the_next_start()
     {
         Directory.CreateDirectory(PluginsDir);
-        foreach (var name in new[] { "Pixie.Tracklist.dll", "Pixie.Tracklist.deps.json" })
-            File.Copy(Path.Combine(TracklistOutput, name), Path.Combine(PluginsDir, name));
-        var settings = new PluginSettings { DisabledIds = { "Pixie.Tracklist" } };   // disabled: nothing maps the file
+        foreach (var name in new[] { "Pixie.TrackTracer.dll", "Pixie.TrackTracer.deps.json" })
+            File.Copy(Path.Combine(TrackTracerOutput, name), Path.Combine(PluginsDir, name));
+        var settings = new PluginSettings { DisabledIds = { "Pixie.TrackTracer" } };   // disabled: nothing maps the file
         var catalog = NewCatalog(settings);
         catalog.Initialize();
         Assert.Equal(PluginStatus.Disabled, catalog.Plugins[0].Status);
 
-        catalog.Uninstall("Pixie.Tracklist");
-        Assert.True(File.Exists(Path.Combine(PluginsDir, "Pixie.Tracklist.dll.uninstall")));
+        catalog.Uninstall("Pixie.TrackTracer");
+        Assert.True(File.Exists(Path.Combine(PluginsDir, "Pixie.TrackTracer.dll.uninstall")));
         Assert.Equal(PluginStatus.PendingUninstall, catalog.Plugins[0].Status);
 
         var nextStart = NewCatalog(settings);
@@ -365,8 +365,8 @@ public sealed class PluginCatalogTests : IDisposable
     [Fact]
     public void A_folder_and_a_loose_dll_with_the_same_id_cannot_both_load()
     {
-        Install("tracklist", from: TracklistOutput);                                   // plugins/tracklist/…
-        File.Copy(Path.Combine(TracklistOutput, "Pixie.Tracklist.dll"), Path.Combine(PluginsDir, "tracklist.dll"));   // plugins/tracklist.dll → id "tracklist" too
+        Install("tracktracer", from: TrackTracerOutput);                                   // plugins/tracktracer/…
+        File.Copy(Path.Combine(TrackTracerOutput, "Pixie.TrackTracer.dll"), Path.Combine(PluginsDir, "tracktracer.dll"));   // plugins/tracktracer.dll → id "tracktracer" too
         var catalog = NewCatalog();
 
         catalog.Initialize();
@@ -374,7 +374,7 @@ public sealed class PluginCatalogTests : IDisposable
         Assert.Equal(2, catalog.Plugins.Count);
         Assert.Single(catalog.Plugins, p => p.Status == PluginStatus.Loaded);
         var refused = Assert.Single(catalog.Plugins, p => p.Status == PluginStatus.Refused);
-        Assert.Contains("já existe um plugin com o id 'tracklist'", refused.Detail);
+        Assert.Contains("já existe um plugin com o id 'tracktracer'", refused.Detail);
     }
 
     // ───── Rescan ─────
@@ -388,16 +388,16 @@ public sealed class PluginCatalogTests : IDisposable
         Assert.Equal(PluginStatus.Refused, Assert.Single(catalog.Plugins).Status);
 
         // Someone drops the real plugin in, fixes the broken manifest, and asks for a rescan.
-        Install("tracklist", from: TracklistOutput);
+        Install("tracktracer", from: TrackTracerOutput);
         File.WriteAllText(Path.Combine(PluginsDir, "broken", PluginCatalog.ManifestFileName), Manifest("broken", entryType: Quiet));
         var enabled = new List<string>();
         catalog.PluginEnabled += (_, p) => enabled.Add(p.Id);
 
         catalog.Rescan();
 
-        Assert.Equal(["broken", "tracklist"], catalog.Plugins.Select(p => p.Id));
+        Assert.Equal(["broken", "tracktracer"], catalog.Plugins.Select(p => p.Id));
         Assert.All(catalog.Plugins, p => Assert.Equal(PluginStatus.Loaded, p.Status));
-        Assert.Equal(["broken", "tracklist"], enabled);
+        Assert.Equal(["broken", "tracktracer"], enabled);
 
         // A refused folder that vanished leaves the list; a running one stays until the app closes.
         Install("elsewhere", Manifest("hello"));
@@ -406,7 +406,7 @@ public sealed class PluginCatalogTests : IDisposable
         Directory.Delete(Path.Combine(PluginsDir, "elsewhere"), recursive: true);
         catalog.Rescan();
         Assert.Null(catalog.Find("elsewhere"));
-        Assert.Equal(PluginStatus.Loaded, catalog.Find("tracklist")!.Status);
+        Assert.Equal(PluginStatus.Loaded, catalog.Find("tracktracer")!.Status);
     }
 
     // ───── Dependencies ─────

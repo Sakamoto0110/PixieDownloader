@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 using YtDlpCore;
 
-namespace Pixie.Tracklist.Detection;
+namespace Pixie.TrackTracer.Detection;
 
 /// <summary>What a line of description/comment text looks like, once its marks have been read.</summary>
 internal enum LineKind

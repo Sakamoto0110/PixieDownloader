@@ -9,7 +9,7 @@
     PixieDownloader-vX.Y.Z-win-x64.zip            .exe pequeno, precisa do .NET 10 Desktop Runtime instalado
     PixieDownloader-vX.Y.Z-win-x64-portable.zip   .exe com o .NET dentro, roda em Windows pelado
     PixieDownloader.Sdk.A.B.C.nupkg               o SDK pra escrever plugins (versão própria = apiVersion, não a do app)
-    PixieDownloader-plugin-tracklist-vA.B.C.zip   o plugin Tracklist (versão própria); extrai em plugins\ ao lado do .exe
+    PixieDownloader-plugin-tracktracer-vA.B.C.zip o plugin TrackTracer (versão própria); extrai em plugins\ ao lado do .exe
     SHA256SUMS.txt                                hash de todos (formato do sha256sum)
     RELEASE_NOTES.md                              tabela dos assets, usada pelo workflow no corpo da release
 
@@ -36,7 +36,7 @@ $csproj  = Join-Path $repo 'src\PixieDownloader\PixieDownloader.csproj'
 $sdkProj = Join-Path $repo 'src\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj'
 # Os plugins que saem na release, cada um como zip próprio (Hello é só de desenvolvimento e fica de fora).
 $plugins = @(
-    @{ Id = 'tracklist'; Name = 'Tracklist'; Dll = 'Pixie.Tracklist.dll'; Proj = Join-Path $repo 'src\Plugins\Pixie.Tracklist\Pixie.Tracklist.csproj'; Out = Join-Path $repo 'src\Plugins\Pixie.Tracklist\bin\Release\net10.0-windows' }
+    @{ Id = 'tracktracer'; Name = 'TrackTracer'; Dll = 'Pixie.TrackTracer.dll'; Proj = Join-Path $repo 'src\Plugins\Pixie.TrackTracer\Pixie.TrackTracer.csproj'; Out = Join-Path $repo 'src\Plugins\Pixie.TrackTracer\bin\Release\net10.0-windows' }
 )
 $sln     = Join-Path $repo 'PixieDownloader.slnx'
 $license = Join-Path $repo 'LICENSE'
@@ -117,7 +117,7 @@ foreach ($f in $flavors) {
         ""
         "Em uso, o app cria ao lado do .exe: settings.json, tools\, cache\, logs\, plugins\, data\, .~downloads\ e pending-downloads.txt."
         ""
-        "Plugins: extraia o zip de um plugin (ex.: PixieDownloader-plugin-tracklist-*.zip, na mesma release) dentro de plugins\"
+        "Plugins: extraia o zip de um plugin (ex.: PixieDownloader-plugin-tracktracer-*.zip, na mesma release) dentro de plugins\"
         "e reabra o app; a aba Plugins liga, desliga e desinstala cada um."
     ) -join "`r`n")
 

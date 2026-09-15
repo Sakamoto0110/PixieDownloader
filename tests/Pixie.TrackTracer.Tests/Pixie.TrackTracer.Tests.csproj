@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The tracklist plugin's tests: the detector against the fixture corpus (one real description/comment -->
+  <!-- The TrackTracer plugin's tests: the detector against the fixture corpus (one real description/comment -->
   <!-- per shape — a new pattern that fails becomes a new file under Fixtures/Tracklists), the payload tree, -->
   <!-- and the ID3 chapter writer on a tiny MP3. net10.0-windows because the plugin is. -->
   <PropertyGroup>
@@ -27,7 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Plugins\Pixie.Tracklist\Pixie.Tracklist.csproj" />
+    <ProjectReference Include="..\..\src\Plugins\Pixie.TrackTracer\Pixie.TrackTracer.csproj" />
   </ItemGroup>
 
 </Project>

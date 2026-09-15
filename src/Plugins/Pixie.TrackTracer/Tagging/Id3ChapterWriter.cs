@@ -1,7 +1,7 @@
-using Pixie.Tracklist.Model;
+using Pixie.TrackTracer.Model;
 using TagLib.Id3v2;
 
-namespace Pixie.Tracklist.Tagging;
+namespace Pixie.TrackTracer.Tagging;
 
 /// <summary>
 /// Writes a tracklist into an MP3 the way podcasts do it — ID3v2 <c>CHAP</c> frames (start/end in ms plus a

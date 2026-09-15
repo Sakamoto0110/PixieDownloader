@@ -1,6 +1,6 @@
 using YtDlpCore;
 
-namespace Pixie.Tracklist.Detection;
+namespace Pixie.TrackTracer.Detection;
 
 /// <summary>
 /// Finds the tracklist of a mix in the free text around the video — the description first, then the

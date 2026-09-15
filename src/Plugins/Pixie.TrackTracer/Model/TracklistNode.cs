@@ -1,9 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Pixie.Tracklist.Detection;
+using Pixie.TrackTracer.Detection;
 using YtDlpCore;
 
-namespace Pixie.Tracklist.Model;
+namespace Pixie.TrackTracer.Model;
 
 public enum NodeKind
 {
@@ -77,7 +77,7 @@ public sealed class TracklistPayload
     /// carries a link is left <see cref="NodeState.Unresolved"/> — it may itself be a mix — and a plain one is
     /// <see cref="NodeState.Empty"/>; nothing is expanded until 1.7 unlocks the depth.
     /// </summary>
-    public static TracklistPayload From(VideoInfo video, Detection.Tracklist list)
+    public static TracklistPayload From(VideoInfo video, Tracklist list)
     {
         var root = new TracklistNode
         {

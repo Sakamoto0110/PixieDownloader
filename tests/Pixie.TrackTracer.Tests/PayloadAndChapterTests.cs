@@ -1,19 +1,19 @@
 using System.IO;
 using System.Text.Json;
-using Pixie.Tracklist.Detection;
-using Pixie.Tracklist.Model;
-using Pixie.Tracklist.Tagging;
+using Pixie.TrackTracer.Detection;
+using Pixie.TrackTracer.Model;
+using Pixie.TrackTracer.Tagging;
 using TagLib.Id3v2;
 using YtDlpCore;
 
-namespace Pixie.Tracklist.Tests;
+namespace Pixie.TrackTracer.Tests;
 
 /// <summary>The tree that goes into the file, and the ID3 frames it becomes — on a 1 s silent MP3 (Fixtures/silence.mp3).</summary>
 public sealed class PayloadAndChapterTests : IDisposable
 {
     private static readonly VideoInfo Video = new("abc", "Mega mix vol. 3", "DJ", TimeSpan.FromSeconds(200), null, "https://www.youtube.com/watch?v=abc");
 
-    private static readonly Detection.Tracklist List = new(
+    private static readonly Tracklist List = new(
         TracklistSource.Description, TracklistShape.Timestamped, "Tracklist",
         [
             new TracklistEntry(1, TimeSpan.Zero, null, "Faixa um", null, "0:00 Faixa um"),

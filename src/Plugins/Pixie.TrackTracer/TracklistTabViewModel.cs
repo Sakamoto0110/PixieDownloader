@@ -1,8 +1,8 @@
 using System.Collections.ObjectModel;
-using Pixie.Tracklist.Detection;
+using Pixie.TrackTracer.Detection;
 using YtDlpCore;
 
-namespace Pixie.Tracklist;
+namespace Pixie.TrackTracer;
 
 /// <summary>
 /// What the plugin knows about one analysed video: the detector's report, which block the user picked
@@ -13,7 +13,7 @@ public sealed class AnalysedVideo(VideoInfo video, TracklistReport report)
 {
     public VideoInfo Video { get; } = video;
     public TracklistReport Report { get; } = report;
-    public Detection.Tracklist? Selected { get; set; } = report.Best;
+    public Tracklist? Selected { get; set; } = report.Best;
     public bool WriteToFile { get; set; } = report.Best is not null;
 }
 
@@ -23,14 +23,14 @@ public sealed class SourceOption : ObservableObject
     private readonly Action<SourceOption> _select;
     private bool _isSelected;
 
-    public SourceOption(Detection.Tracklist list, Action<SourceOption> select)
+    public SourceOption(Tracklist list, Action<SourceOption> select)
     {
         List = list;
         _select = select;
         Label = $"{Where(list)} · {list.Entries.Count}";
     }
 
-    public Detection.Tracklist List { get; }
+    public Tracklist List { get; }
     public string Label { get; }
     public string ToolTip => TracklistReportFormatter.Describe(List);
 
@@ -49,7 +49,7 @@ public sealed class SourceOption : ObservableObject
 
     internal void SetSelected(bool value) => SetProperty(ref _isSelected, value, nameof(IsSelected));
 
-    private static string Where(Detection.Tracklist t) => t.Source switch
+    private static string Where(Tracklist t) => t.Source switch
     {
         TracklistSource.Description => "Descrição",
         TracklistSource.PinnedComment => "Comentário fixado",

@@ -1,19 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Module 1 of docs/ROADMAP.md: the tracklist detector (description → pinned comment → other top -->
-  <!-- comments → yt-dlp chapters as fallback), a "Tracklist" tab showing what was found per source, and the -->
-  <!-- ID3 chapters (CHAP/CTOC + the full tree in TXXX:PIXIE_TRACKLIST) written into the MP3 after the -->
-  <!-- download. Installed as plugins/tracklist/ next to the exe; the release ships it as its own zip. -->
+  <!-- Module 1 of docs/ROADMAP.md — TrackTracer, "traces the tracks" of a mix: the tracklist detector -->
+  <!-- (description → pinned comment → other top comments → yt-dlp chapters as fallback), a "Tracklist" tab -->
+  <!-- showing what was found per source, and the ID3 chapters (CHAP/CTOC + the full tree in -->
+  <!-- TXXX:PIXIE_TRACKLIST) written into the MP3 after the download. Installed as plugins/tracktracer/ next -->
+  <!-- to the exe; the release ships it as its own zip. (Was Pixie.Tracklist / plugins/tracklist/ in 1.6.) -->
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>Pixie.Tracklist</RootNamespace>
+    <RootNamespace>Pixie.TrackTracer</RootNamespace>
     <!-- No plugin.json: the host reads id (folder), name, version, apiVersion and the entry class from the -->
     <!-- assembly's metadata. So this is the plugin's version, and AssemblyTitle is what the Plugins tab shows. -->
     <Version>1.0.0</Version>
-    <AssemblyTitle>Tracklist</AssemblyTitle>
+    <AssemblyTitle>TrackTracer</AssemblyTitle>
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
 
@@ -29,16 +30,16 @@
 
   <!-- The tests drive TracklistLine (internal) directly, as they did when it lived in the core. -->
   <ItemGroup>
-    <InternalsVisibleTo Include="Pixie.Tracklist.Tests" />
+    <InternalsVisibleTo Include="Pixie.TrackTracer.Tests" />
   </ItemGroup>
 
-  <!-- Dev convenience: mirror the build into the app's output as plugins/tracklist/, so `dotnet run` has it. -->
+  <!-- Dev convenience: mirror the build into the app's output as plugins/tracktracer/, so `dotnet run` has it. -->
   <Target Name="CopyToAppPlugins" AfterTargets="Build">
     <ItemGroup>
-      <_TracklistOutput Include="$(TargetDir)**\*" />
+      <_TrackTracerOutput Include="$(TargetDir)**\*" />
     </ItemGroup>
-    <Copy SourceFiles="@(_TracklistOutput)"
-          DestinationFolder="$(MSBuildThisFileDirectory)..\..\PixieDownloader\bin\$(Configuration)\net10.0-windows\plugins\tracklist\%(RecursiveDir)"
+    <Copy SourceFiles="@(_TrackTracerOutput)"
+          DestinationFolder="$(MSBuildThisFileDirectory)..\..\PixieDownloader\bin\$(Configuration)\net10.0-windows\plugins\tracktracer\%(RecursiveDir)"
           SkipUnchangedFiles="true" />
   </Target>
 

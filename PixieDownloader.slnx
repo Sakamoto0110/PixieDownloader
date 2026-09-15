@@ -6,11 +6,11 @@
   </Folder>
   <Folder Name="/src/Plugins/">
     <Project Path="src/Plugins/Pixie.Hello/Pixie.Hello.csproj" />
-    <Project Path="src/Plugins/Pixie.Tracklist/Pixie.Tracklist.csproj" />
+    <Project Path="src/Plugins/Pixie.TrackTracer/Pixie.TrackTracer.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/YtDlpCore.Tests/YtDlpCore.Tests.csproj" />
     <Project Path="tests/PluginHost.Tests/PluginHost.Tests.csproj" />
-    <Project Path="tests/Pixie.Tracklist.Tests/Pixie.Tracklist.Tests.csproj" />
+    <Project Path="tests/Pixie.TrackTracer.Tests/Pixie.TrackTracer.Tests.csproj" />
   </Folder>
 </Solution>

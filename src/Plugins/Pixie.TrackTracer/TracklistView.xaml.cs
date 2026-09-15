@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Windows.Controls;
 using System.Windows.Navigation;
 
-namespace Pixie.Tracklist;
+namespace Pixie.TrackTracer;
 
 public partial class TracklistView : UserControl
 {

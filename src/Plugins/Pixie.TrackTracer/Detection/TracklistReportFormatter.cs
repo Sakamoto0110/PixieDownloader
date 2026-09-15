@@ -2,7 +2,7 @@ using System.Text;
 
 using YtDlpCore;
 
-namespace Pixie.Tracklist.Detection;
+namespace Pixie.TrackTracer.Detection;
 
 /// <summary>
 /// Renders a <see cref="TracklistReport"/> as the plain-text block the debug tab shows after an
