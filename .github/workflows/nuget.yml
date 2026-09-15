@@ -1,0 +1,53 @@
+# Publica o SDK de plugins (PixieDownloader.Sdk.<apiVersion>.nupkg) no nuget.org.
+# Roda sozinho quando uma release é publicada — o .nupkg vem dos assets dela, o mesmo arquivo que o
+# scripts/release.ps1 gerou — e também à mão (Actions → "Publish SDK to nuget.org" → Run workflow, com o tag).
+# Precisa do secret NUGET_API_KEY (nuget.org → API Keys → escopo "Push", glob PixieDownloader.*); sem ele
+# só avisa e sai, sem falhar a release. --skip-duplicate: a mesma versão do Sdk sai em várias releases do
+# app, e a segunda vez é no-op (o nuget.org não aceita republicar uma versão).
+name: Publish SDK to nuget.org
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag da release de onde tirar o .nupkg (ex.: v1.6.1)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    runs-on: ubuntu-24.04   # empurrar um .nupkg não precisa de nada do Windows
+    env:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+    steps:
+      - name: Sem NUGET_API_KEY, nada a fazer
+        if: env.NUGET_API_KEY == ''
+        run: echo "::warning::secret NUGET_API_KEY não configurado — o SDK não foi publicado no nuget.org"
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: env.NUGET_API_KEY != ''
+        with:
+          dotnet-version: '10.0.400'
+
+      - name: Baixar o .nupkg da release
+        if: env.NUGET_API_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A release recém-publicada pode ainda estar recebendo os assets: tenta por até dois minutos.
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'PixieDownloader.Sdk.*.nupkg' --dir pkg; then
+              ls -la pkg; exit 0
+            fi
+            echo "asset ainda não disponível, tentando de novo em 20 s ($i/6)"; sleep 20
+          done
+          echo "::error::nenhum PixieDownloader.Sdk.*.nupkg na release $TAG"; exit 1
+
+      - name: dotnet nuget push
+        if: env.NUGET_API_KEY != ''
+        run: dotnet nuget push pkg/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

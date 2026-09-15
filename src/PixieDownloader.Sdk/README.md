@@ -41,8 +41,8 @@ plugin** — `ExcludeAssets="runtime"` cuida disso:
 </Project>
 ```
 
-Se o pacote veio como asset da release em vez do nuget.org:
-`dotnet nuget add source <pasta-onde-está-o-.nupkg> --name pixie`.
+No nuget.org é `dotnet add package PixieDownloader.Sdk`. Se preferir o asset
+da release: `dotnet nuget add source <pasta-onde-está-o-.nupkg> --name pixie`.
 
 ## Como o app reconhece o plugin
 

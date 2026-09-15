@@ -8,6 +8,7 @@ O bloco da versão é copiado para o corpo da GitHub Release pelo `scripts/relea
 ### Alterado
 - A aba **Debug / Tests** fica escondida por padrão. A bolinha vermelha "debug" na barra de status (à esquerda de "yt-dlp") a libera: clique e segure por 5 segundos — ela fica verde e a aba aparece; um clique nela de novo esconde. Fica salvo.
 - Ordem das abas: Baixar, Fila, Plugins, as abas dos plugins na ordem da pasta, Debug (quando liberada) e Logs sempre por último. Plugin desabilitado e reabilitado volta pra posição original entre os outros, não pro fim.
+- O SDK passa a ser publicado no nuget.org a cada release (`PixieDownloader.Sdk`).
 
 ## [1.6.0] — 2026-09-14
 
