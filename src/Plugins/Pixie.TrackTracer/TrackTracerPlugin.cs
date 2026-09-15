@@ -72,19 +72,21 @@ public sealed class TrackTracerPlugin : IPixiePlugin, IUiContribution
         var duration = analysed.Video.Duration;
         var token = _host.ShutdownToken;
         // The file is ours to touch now (yt-dlp is done), but tagging a big MP3 can take a moment — off the UI thread.
+        // Nobody waits for this task: the writer swaps the file in atomically, so the app closing mid-way costs
+        // the chapters, never the MP3.
         _ = Task.Run(() =>
         {
             try
             {
                 token.ThrowIfCancellationRequested();
-                var chapters = Id3ChapterWriter.Write(path, payload, duration);
+                var chapters = Id3ChapterWriter.Write(path, payload, duration, token);
                 _host.Log(LogLevel.Info, chapters > 0
                     ? $"{chapters} capítulos gravados em {Path.GetFileName(path)}"
                     : $"lista gravada em {Path.GetFileName(path)} (sem tempos, sem capítulos)");
             }
             catch (OperationCanceledException)
             {
-                // disabled while writing: leave the file as it is
+                // disabled before the swap: the file is as the download left it
             }
             catch (Exception ex)
             {

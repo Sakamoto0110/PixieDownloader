@@ -4,21 +4,26 @@ namespace PixieDownloader.Plugins;
 
 /// <summary>
 /// The one place a plugin can reach another: by capability id, always through the host, never by type. Each
-/// registration is owned by the plugin that made it and goes away with it when that plugin is disabled —
-/// which is exactly what makes a disabled plugin unreachable. Plugins may call this from any thread.
+/// registration is owned by the <see cref="PluginHost"/> that made it and goes away with it when that plugin
+/// is disabled — which is exactly what makes a disabled plugin unreachable. Plugins may call this from any
+/// thread, so whether the owner is still alive is decided under the same lock that removes its entries: a
+/// registration racing the owner's shutdown either lands before it (and is removed by it) or is ignored.
 /// </summary>
 internal sealed class CapabilityRegistry
 {
     private readonly object _gate = new();
-    private readonly Dictionary<string, (string PluginId, Delegate Implementation)> _entries = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (PluginHost Owner, Delegate Implementation)> _entries = new(StringComparer.Ordinal);
 
-    public IDisposable Register(string pluginId, string id, Delegate implementation)
+    /// <summary>Registers for a live owner; a shut-down one gets <see cref="NoRegistration"/> back, not an entry.</summary>
+    public IDisposable Register(PluginHost owner, string id, Delegate implementation)
     {
         lock (_gate)
         {
+            if (owner.IsShutDown)
+                return NoRegistration.Instance;
             if (_entries.TryGetValue(id, out var existing))
-                throw new InvalidOperationException($"A capacidade '{id}' já está registrada pelo plugin '{existing.PluginId}'.");
-            _entries[id] = (pluginId, implementation);
+                throw new InvalidOperationException($"A capacidade '{id}' já está registrada pelo plugin '{existing.Owner.Manifest.Id}'.");
+            _entries[id] = (owner, implementation);
         }
         return new Registration(this, id, implementation);
     }
@@ -37,12 +42,12 @@ internal sealed class CapabilityRegistry
         return false;
     }
 
-    /// <summary>Drops everything a plugin registered — disable and app exit.</summary>
-    public void RemoveAll(string pluginId)
+    /// <summary>Drops everything a host registered — disable, a failed Configure, app exit.</summary>
+    public void RemoveAll(PluginHost owner)
     {
         lock (_gate)
         {
-            foreach (var id in _entries.Where(e => e.Value.PluginId == pluginId).Select(e => e.Key).ToList())
+            foreach (var id in _entries.Where(e => ReferenceEquals(e.Value.Owner, owner)).Select(e => e.Key).ToList())
                 _entries.Remove(id);
         }
     }
@@ -61,4 +66,11 @@ internal sealed class CapabilityRegistry
     {
         public void Dispose() => owner.Remove(id, implementation);
     }
+}
+
+/// <summary>What a plugin gets back for a registration the host ignored (made after its shutdown): disposing it does nothing.</summary>
+internal sealed class NoRegistration : IDisposable
+{
+    public static readonly NoRegistration Instance = new();
+    public void Dispose() { }
 }

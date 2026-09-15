@@ -1,3 +1,4 @@
+using System.IO;
 using Pixie.TrackTracer.Model;
 using TagLib.Id3v2;
 
@@ -15,13 +16,46 @@ public static class Id3ChapterWriter
     private const string TocId = "toc";
     private const uint NoByteOffset = 0xFFFFFFFF;   // the spec's "not used" for the byte offsets
 
+    /// <summary>The copy being tagged, next to the file; never left behind by a run that finished, well or badly.</summary>
+    public const string TempSuffix = ".pixie-tmp";
+
     /// <summary>
     /// Returns how many <c>CHAP</c> frames were written — zero when the entries carry no start times, in
     /// which case only the payload goes in. The last chapter ends at <paramref name="totalDuration"/>.
+    /// The file is never touched in place: the tag goes into a copy next to it and the copy takes the
+    /// original's place in one rename, so a process that dies halfway (the app closing right after a
+    /// download) leaves the old file, not a broken one — and a cancellation before the swap leaves it too.
     /// </summary>
-    public static int Write(string mp3Path, TracklistPayload payload, TimeSpan? totalDuration)
+    public static int Write(string mp3Path, TracklistPayload payload, TimeSpan? totalDuration, CancellationToken cancellationToken = default)
     {
-        using var file = TagLib.File.Create(mp3Path);
+        var temp = mp3Path + TempSuffix;
+        try
+        {
+            File.Copy(mp3Path, temp, overwrite: true);
+            int chapters;
+            // TagLib# saves in place, rewriting the whole file whenever the tag grows (it always grows: the
+            // ffmpeg that made the file left no padding) — that is why it works on the copy. The mime type is
+            // given because the copy's name doesn't end in .mp3.
+            using (var file = TagLib.File.Create(temp, "audio/mpeg", TagLib.ReadStyle.Average))
+            {
+                chapters = WriteTag(file, payload, totalDuration);
+                cancellationToken.ThrowIfCancellationRequested();
+                file.Save();
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temp, mp3Path, overwrite: true);
+            return chapters;
+        }
+        finally
+        {
+            // A no-op after the rename; the leftover after a throw. Never lets a locked temp mask that throw.
+            try { File.Delete(temp); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private static int WriteTag(TagLib.File file, TracklistPayload payload, TimeSpan? totalDuration)
+    {
         var tag = (Tag)file.GetTag(TagLib.TagTypes.Id3v2, create: true);
 
         tag.RemoveFrames("CHAP");
@@ -58,7 +92,6 @@ public static class Id3ChapterWriter
             tag.AddFrame(new TableOfContentsFrame(TocId, payload.Root.Title) { IsTopLevel = true, IsOrdered = true, ChapterIds = ids });
 
         tag.AddFrame(new UserTextInformationFrame(PayloadDescription) { Text = [payload.ToJson()] });
-        file.Save();
         return ids.Count;
     }
 

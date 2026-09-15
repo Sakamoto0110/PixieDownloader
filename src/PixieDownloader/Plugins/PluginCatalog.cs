@@ -289,6 +289,7 @@ public sealed class PluginCatalog
     private void Load(InstalledPlugin plugin)
     {
         var manifest = plugin.Manifest!;
+        PluginHost? host = null;
         try
         {
             var assemblyPath = plugin.LooseAssemblyPath ?? Path.Combine(plugin.Directory, manifest.AssemblyFile);
@@ -300,7 +301,7 @@ public sealed class PluginCatalog
             if (Activator.CreateInstance(type) is not IPixiePlugin instance)
                 throw new InvalidOperationException($"'{manifest.EntryType}' não implementa IPixiePlugin");
 
-            var host = new PluginHost(this, manifest, _downloads, Path.Combine(_dataDirectory, manifest.Id));
+            host = new PluginHost(this, manifest, _downloads, Path.Combine(_dataDirectory, manifest.Id));
             instance.Configure(host);
 
             plugin.Instance = instance;
@@ -312,6 +313,12 @@ public sealed class PluginCatalog
         }
         catch (Exception ex)
         {
+            // Configure may have registered a capability, asked for comments or started work on the token
+            // before it threw. A failed plugin leaves nothing behind — least of all a capability that its own
+            // retry (Habilitar) would then collide with.
+            host?.Shutdown();
+            plugin.Instance = null;
+            plugin.Host = null;
             plugin.Status = PluginStatus.Failed;
             plugin.Detail = ex.Message;
             Emit(LogLevel.Error, $"Plugin '{plugin.Id}' falhou ao carregar: {ex.Message}", ex);
@@ -440,7 +447,7 @@ public sealed class PluginCatalog
     // also isolates a throwing handler. All on the UI thread.
 
     /// <summary>True while any loaded plugin asked for comments: the app's single-video analyses then pass <c>fetchComments</c>.</summary>
-    public bool WantsAnalysisComments => _plugins.Any(p => p.Host?.WantsAnalysisComments == true);
+    public bool WantsAnalysisComments => _plugins.Any(p => p.Status == PluginStatus.Loaded && p.Host?.WantsAnalysisComments == true);
 
     public void RaiseAnalysisCompleted(string url, UrlInfo info)
     {

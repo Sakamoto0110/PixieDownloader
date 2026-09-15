@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using PixieDownloader.Sdk;
@@ -49,9 +50,9 @@ internal sealed class PluginHost : IPluginHost
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentNullException.ThrowIfNull(implementation);
-        if (IsShutDown)
-            return NoRegistration.Instance;   // a disabled plugin registering late: ignored, not an error
-        return _catalog.Capabilities.Register(Manifest.Id, id, implementation);
+        // A disabled plugin registering late is ignored, not an error — the registry decides that under its own
+        // lock, so a registration from a background thread can't slip in behind Shutdown's RemoveAll.
+        return _catalog.Capabilities.Register(this, id, implementation);
     }
 
     public bool TryGetCapability(string id, [NotNullWhen(true)] out Delegate? implementation)
@@ -82,10 +83,15 @@ internal sealed class PluginHost : IPluginHost
 
     internal void RaiseDownloadCompleted(DownloadCompletedEventArgs e) => Raise(DownloadCompleted, e, "DownloadCompleted");
 
+    // Handlers run on the UI thread, by contract, and are expected to hand real work to a task. One that
+    // doesn't freezes the whole app for as long as it takes — so it gets named in the logs.
+    private static readonly TimeSpan SlowHandler = TimeSpan.FromMilliseconds(250);
+
     private void Raise<T>(EventHandler<T>? handler, T e, string name)
     {
         if (handler is null || IsShutDown)
             return;
+        var started = Stopwatch.GetTimestamp();
         try
         {
             handler(this, e);
@@ -94,24 +100,30 @@ internal sealed class PluginHost : IPluginHost
         {
             Log(LogLevel.Error, $"handler de {name} falhou: {ex.Message}", ex);
         }
+        var took = Stopwatch.GetElapsedTime(started);
+        if (took > SlowHandler)
+            Log(LogLevel.Warning, $"handler de {name} segurou a UI por {took.TotalMilliseconds:F0} ms — trabalho demorado vai numa Task");
     }
 
-    /// <summary>Disable or app exit: cancels the token and drops this plugin's registrations. Idempotent.</summary>
+    /// <summary>Disable, a failed Configure or app exit: cancels the token and drops this plugin's registrations. Idempotent.</summary>
     internal void Shutdown()
     {
         if (IsShutDown)
             return;
-        _shutdown.Cancel();
-        _catalog.Capabilities.RemoveAll(Manifest.Id);
+        try
+        {
+            _shutdown.Cancel();   // runs whatever the plugin hung on ShutdownToken.Register, right here
+        }
+        catch (AggregateException ex)
+        {
+            // A callback that throws is the plugin's bug, not a reason for Desabilitar or the app's exit to crash.
+            foreach (var inner in ex.InnerExceptions)
+                Log(LogLevel.Error, $"callback de ShutdownToken falhou: {inner.Message}", inner);
+        }
+        _catalog.Capabilities.RemoveAll(this);
         AnalysisCompleted = null;
         DownloadCompleted = null;
         Volatile.Write(ref _commentRequests, 0);
-    }
-
-    private sealed class NoRegistration : IDisposable
-    {
-        public static readonly NoRegistration Instance = new();
-        public void Dispose() { }
     }
 
     private sealed class CommentRequest(PluginHost host) : IDisposable

@@ -389,7 +389,12 @@ custo.
 
 Duas superfícies, versionadas separadamente: o app e o `apiVersion` do Sdk.
 Adicionar método ao `IPluginHost` é minor do Sdk e pode acontecer numa release
-de app que seja patch.
+de app que seja patch. O lado que o plugin implementa (`IPixiePlugin`,
+`IUiContribution`) não ganha membro obrigatório dentro de um major — membro
+novo ali quebra todo plugin existente na instanciação, com o `IsCompatible`
+dizendo que está tudo bem; o que entrar vem como interface opcional nova ou
+default interface member. E o `apiVersion` cobre o surface público do
+`YtDlpCore`, que o plugin enxerga pelo Sdk e carrega do host.
 
 Para o app, o critério é o contrato público:
 

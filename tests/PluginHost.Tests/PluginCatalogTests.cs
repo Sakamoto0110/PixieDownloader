@@ -18,6 +18,7 @@ public sealed class PluginCatalogTests : IDisposable
 {
     private const string GreetCapability = "hello.greet";       // what Pixie.Hello's HelloPlugin registers in Configure
     private const string Quiet = "Pixie.Hello.QuietPlugin";     // its other entry type: Configure only, no tab, no capability
+    private const string Faulty = "Pixie.Hello.FaultyPlugin";   // and the third: registers, then throws out of Configure
 
     private static readonly string HelloOutput = OutputOf("HelloPluginOutput");
     private static readonly string TrackTracerOutput = OutputOf("TrackTracerPluginOutput");   // the real plugin: one entry class, no plugin.json
@@ -251,15 +252,86 @@ public sealed class PluginCatalogTests : IDisposable
     public void Two_entry_classes_without_a_manifest_are_refused_by_name()
     {
         var dir = Install();
-        File.Delete(Path.Combine(dir, PluginCatalog.ManifestFileName));   // Hello has HelloPlugin and QuietPlugin
+        File.Delete(Path.Combine(dir, PluginCatalog.ManifestFileName));   // Hello has HelloPlugin, QuietPlugin and FaultyPlugin
         var catalog = NewCatalog();
 
         catalog.Initialize();
 
         var plugin = Assert.Single(catalog.Plugins);
         Assert.Equal(PluginStatus.Refused, plugin.Status);
-        Assert.Equal("Pixie.Hello.dll tem mais de uma classe que implementa IPixiePlugin (Pixie.Hello.HelloPlugin, Pixie.Hello.QuietPlugin) — diga qual no plugin.json", plugin.Detail);
+        Assert.Equal("Pixie.Hello.dll tem mais de uma classe que implementa IPixiePlugin (Pixie.Hello.FaultyPlugin, Pixie.Hello.HelloPlugin, Pixie.Hello.QuietPlugin) — diga qual no plugin.json", plugin.Detail);
         Assert.Null(plugin.LoadContext);
+    }
+
+    // ───── A Configure that throws ─────
+
+    [Fact]
+    public void A_Configure_that_throws_halfway_leaves_nothing_behind_and_the_retry_fails_for_its_own_reason()
+    {
+        Install("faulty", Manifest("faulty", entryType: Faulty));
+        var catalog = NewCatalog();
+        var logged = new List<LogEntry>();
+        catalog.LogEmitted += (_, e) => logged.Add(e);
+
+        catalog.Initialize();
+
+        var plugin = Assert.Single(catalog.Plugins);
+        Assert.Equal(PluginStatus.Failed, plugin.Status);
+        Assert.Equal("boom no Configure", plugin.Detail);
+        Assert.Null(plugin.Instance);
+        Assert.Null(plugin.Host);
+
+        // What Configure managed before throwing is rolled back: the capability can't be reached, the comments
+        // aren't wanted, and the token was cancelled (the plugin's own callback said so).
+        Assert.False(catalog.Capabilities.TryGet("faulty.before", out _));
+        Assert.False(catalog.WantsAnalysisComments);
+        Assert.Contains(logged, e => e.Source == "Plugin:faulty" && e.Message == "token cancelado");
+
+        // Habilitar is the retry. It fails again for the plugin's own reason — not because the first attempt's
+        // registration is still there for the second to collide with.
+        Assert.False(catalog.Enable("faulty"));
+        Assert.Equal(PluginStatus.Failed, plugin.Status);
+        Assert.Equal("boom no Configure", plugin.Detail);
+        Assert.False(catalog.Capabilities.TryGet("faulty.before", out _));
+    }
+
+    [Fact]
+    public void A_ShutdownToken_callback_that_throws_is_logged_and_does_not_crash_Disable()
+    {
+        Install();
+        var catalog = NewCatalog();
+        var logged = new List<LogEntry>();
+        catalog.LogEmitted += (_, e) => logged.Add(e);
+        catalog.Initialize();
+        var plugin = catalog.Plugins[0];
+        plugin.Host!.ShutdownToken.Register(() => throw new InvalidOperationException("callback boom"));
+
+        catalog.Disable("hello");   // CancellationTokenSource.Cancel rethrows callback exceptions as an AggregateException
+
+        Assert.Equal(PluginStatus.Disabled, plugin.Status);
+        Assert.False(catalog.Capabilities.TryGet(GreetCapability, out _));   // the shutdown still finished
+        var error = Assert.Single(logged, e => e.Level == LogLevel.Error);
+        Assert.Equal("Plugin:hello", error.Source);
+        Assert.Contains("callback boom", error.Message);
+    }
+
+    [Fact]
+    public void A_capability_registered_after_the_shutdown_is_ignored()
+    {
+        Install();
+        var catalog = NewCatalog();
+        catalog.Initialize();
+        var host = catalog.Plugins[0].Host!;
+        catalog.Disable("hello");
+
+        // A background task of the plugin that didn't notice the token yet: nothing lands, nothing throws.
+        var late = host.RegisterCapability("hello.late", (Func<int>)(() => 1));
+        var comments = host.RequireAnalysisComments();
+
+        Assert.False(catalog.Capabilities.TryGet("hello.late", out _));
+        Assert.False(catalog.WantsAnalysisComments);
+        late.Dispose();
+        comments.Dispose();
     }
 
     [Fact]

@@ -45,13 +45,17 @@ public interface IPluginHost
 
     /// <summary>
     /// Raised on the UI thread after every analysis the user runs — single video or playlist — with the same
-    /// result the preview shows. Nothing is raised for analyses that failed or were cancelled.
+    /// result the preview shows. Nothing is raised for analyses that failed or were cancelled. The handler
+    /// holds the whole app while it runs: return fast, hand anything slow (I/O, network) to a task that watches
+    /// <see cref="ShutdownToken"/> — a handler that lingers gets named in the logs.
     /// </summary>
     event EventHandler<AnalysisCompletedEventArgs>? AnalysisCompleted;
 
     /// <summary>
     /// Raised on the UI thread when a download job has delivered its final file. Work on the file (tagging,
-    /// copying) belongs on a background task — the queue keeps moving meanwhile.
+    /// copying) belongs on a background task — the queue keeps moving meanwhile, and nobody waits for that
+    /// task: the app may exit in the middle of it, so it must leave the file whole at every moment (write a
+    /// copy and swap it in, never edit in place).
     /// </summary>
     event EventHandler<DownloadCompletedEventArgs>? DownloadCompleted;
 

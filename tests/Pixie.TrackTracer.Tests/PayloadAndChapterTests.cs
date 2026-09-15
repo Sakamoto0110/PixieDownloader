@@ -102,6 +102,20 @@ public sealed class PayloadAndChapterTests : IDisposable
         var back = Id3ChapterWriter.Read(_mp3)!;
         Assert.Equal("description", back.Source);
         Assert.Equal(3, back.Root.Children.Count);
+        Assert.False(File.Exists(_mp3 + Id3ChapterWriter.TempSuffix));   // the copy that was tagged became the file
+    }
+
+    [Fact]
+    public void A_cancellation_before_the_swap_leaves_the_original_untouched_and_no_temp_behind()
+    {
+        var before = File.ReadAllBytes(_mp3);
+        var cancelled = new CancellationToken(canceled: true);   // noticed only after the tag is built, before the swap
+
+        Assert.Throws<OperationCanceledException>(() => Id3ChapterWriter.Write(_mp3, TracklistPayload.From(Video, List), Video.Duration, cancelled));
+
+        Assert.Equal(before, File.ReadAllBytes(_mp3));
+        Assert.False(File.Exists(_mp3 + Id3ChapterWriter.TempSuffix));
+        Assert.Null(Id3ChapterWriter.Read(_mp3));
     }
 
     [Fact]

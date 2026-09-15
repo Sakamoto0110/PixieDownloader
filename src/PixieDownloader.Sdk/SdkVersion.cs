@@ -2,10 +2,20 @@ namespace PixieDownloader.Sdk;
 
 /// <summary>
 /// The version of this contract — the <c>&lt;Version&gt;</c> of <c>PixieDownloader.Sdk.csproj</c>, which is also the
-/// version of the <c>.nupkg</c> — kept apart from the app's version. Adding a member to a public interface here is
-/// a minor bump; changing or removing one is a major. A plugin declares in its manifest the version it was built
-/// against (<see cref="PluginManifest.ApiVersion"/>), and the host refuses it before loading any code when the two
-/// do not fit.
+/// version of the <c>.nupkg</c> — kept apart from the app's version. It covers the public surface of
+/// <c>YtDlpCore</c> as well: plugins compile against the copy in the package and bind to the host's at run
+/// time, so a change there is a change here even when this assembly is untouched.
+/// <para>
+/// What a minor may add depends on who implements the type. The host implements <see cref="IPluginHost"/>
+/// (and <c>IYtDlpService</c>), so those may grow: a plugin built against 1.0 never calls what 1.1 added. The
+/// plugin implements <see cref="IPixiePlugin"/> and <see cref="IUiContribution"/>, so an abstract member added
+/// there would fail every existing plugin the moment it is instantiated — the plugin side only grows through a
+/// new optional interface (the way <see cref="IUiContribution"/> sits next to <see cref="IPixiePlugin"/>) or a
+/// member with a default implementation. Changing or removing anything public, on either side or in the core,
+/// is a major.
+/// </para>
+/// A plugin declares in its manifest the version it was built against (<see cref="PluginManifest.ApiVersion"/>),
+/// and the host refuses it before loading any code when the two do not fit.
 /// </summary>
 public static class SdkVersion
 {

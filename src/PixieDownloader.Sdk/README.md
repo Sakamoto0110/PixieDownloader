@@ -62,6 +62,15 @@ O host aceita o plugin quando o major do apiVersion é o mesmo e o minor não é
 mais novo que o dele — e recusa, com o motivo nos logs e na aba Plugins, antes
 de carregar qualquer código.
 
+O que a versão promete: o major é o mesmo → o que você compilou continua
+existindo. Um minor só **acrescenta**, e só do lado que o host implementa
+(`IPluginHost`, `IYtDlpService`): plugin feito na 1.0 nunca chama o que a 1.1
+trouxe. O lado que *você* implementa (`IPixiePlugin`, `IUiContribution`) não
+ganha membro obrigatório dentro de um major — o que entrar vem como interface
+opcional nova ou com implementação padrão. E a versão cobre `YtDlpCore` junto:
+o `.dll` do pacote é o mesmo que o app carrega, então mudar algo público lá é
+mudar o contrato.
+
 Um `plugin.json` na pasta **substitui** tudo isso, e é obrigatório quando a
 convenção não basta: mais de uma classe `IPixiePlugin` no assembly, dependência
 de outro plugin (`dependsOn`), id diferente da pasta. (Só em pasta: um `.dll`
