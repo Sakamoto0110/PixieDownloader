@@ -19,9 +19,11 @@ public sealed class PluginCatalogTests : IDisposable
     private const string GreetCapability = "hello.greet";       // what Pixie.Hello's HelloPlugin registers in Configure
     private const string Quiet = "Pixie.Hello.QuietPlugin";     // its other entry type: Configure only, no tab, no capability
 
-    private static readonly string HelloOutput =
-        typeof(PluginCatalogTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
-            .Single(a => a.Key == "HelloPluginOutput").Value!;
+    private static readonly string HelloOutput = OutputOf("HelloPluginOutput");
+    private static readonly string TracklistOutput = OutputOf("TracklistPluginOutput");   // the real plugin: one entry class, no plugin.json
+
+    private static string OutputOf(string key) =>
+        typeof(PluginCatalogTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == key).Value!;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "pixie-plugin-tests", Guid.NewGuid().ToString("N"));
     private readonly List<IDisposable> _disposables = [];
@@ -217,8 +219,79 @@ public sealed class PluginCatalogTests : IDisposable
 
         Assert.Equal(2, catalog.Plugins.Count);
         Assert.All(catalog.Plugins, p => Assert.Equal(PluginStatus.Refused, p.Status));
-        Assert.Equal("sem plugin.json", catalog.Find("empty")!.Detail);
+        Assert.Equal("sem plugin.json e sem um .dll que referencie o PixieDownloader.Sdk", catalog.Find("empty")!.Detail);
         Assert.Equal("'Nope.dll' não está na pasta", catalog.Find("ghost")!.Detail);
+    }
+
+    // ───── No plugin.json: the assembly's metadata is the manifest ─────
+
+    [Fact]
+    public void A_folder_without_plugin_json_is_described_by_its_assembly_and_loads()
+    {
+        var dir = Install("tracklist", from: TracklistOutput);
+        Assert.False(File.Exists(Path.Combine(dir, PluginCatalog.ManifestFileName)));
+        var catalog = NewCatalog();
+
+        catalog.Initialize();
+
+        var plugin = Assert.Single(catalog.Plugins);
+        Assert.Equal(PluginStatus.Loaded, plugin.Status);
+        var m = plugin.Manifest!;
+        Assert.Equal("tracklist", m.Id);                              // the folder
+        Assert.Equal("Tracklist", m.Name);                            // <AssemblyTitle>
+        Assert.Equal("1.0.0", m.Version);                             // <Version>
+        Assert.Equal($"{SdkVersion.Current.Major}.{SdkVersion.Current.Minor}", m.ApiVersion);   // the Sdk it was compiled against
+        Assert.Equal("Pixie.Tracklist.dll", m.AssemblyFile);          // the one DLL referencing the Sdk (TagLibSharp.dll is skipped)
+        Assert.Equal("Pixie.Tracklist.TracklistPlugin", m.EntryType); // the one IPixiePlugin class
+        Assert.Empty(m.DependsOn);
+        Assert.True(plugin.HasUi);
+    }
+
+    [Fact]
+    public void Two_entry_classes_without_a_manifest_are_refused_by_name()
+    {
+        var dir = Install();
+        File.Delete(Path.Combine(dir, PluginCatalog.ManifestFileName));   // Hello has HelloPlugin and QuietPlugin
+        var catalog = NewCatalog();
+
+        catalog.Initialize();
+
+        var plugin = Assert.Single(catalog.Plugins);
+        Assert.Equal(PluginStatus.Refused, plugin.Status);
+        Assert.Equal("Pixie.Hello.dll tem mais de uma classe que implementa IPixiePlugin (Pixie.Hello.HelloPlugin, Pixie.Hello.QuietPlugin) — diga qual no plugin.json", plugin.Detail);
+        Assert.Null(plugin.LoadContext);
+    }
+
+    // ───── Rescan ─────
+
+    [Fact]
+    public void Rescan_loads_a_folder_dropped_in_while_running_and_drops_one_that_left()
+    {
+        Install("broken", "{ not json");
+        var catalog = NewCatalog();
+        catalog.Initialize();
+        Assert.Equal(PluginStatus.Refused, Assert.Single(catalog.Plugins).Status);
+
+        // Someone drops the real plugin in, fixes the broken manifest, and asks for a rescan.
+        Install("tracklist", from: TracklistOutput);
+        File.WriteAllText(Path.Combine(PluginsDir, "broken", PluginCatalog.ManifestFileName), Manifest("broken", entryType: Quiet));
+        var enabled = new List<string>();
+        catalog.PluginEnabled += (_, p) => enabled.Add(p.Id);
+
+        catalog.Rescan();
+
+        Assert.Equal(["broken", "tracklist"], catalog.Plugins.Select(p => p.Id));
+        Assert.All(catalog.Plugins, p => Assert.Equal(PluginStatus.Loaded, p.Status));
+        Assert.Equal(["broken", "tracklist"], enabled);
+
+        // A refused folder that vanished leaves the list; a running one stays until the app closes.
+        Install("elsewhere", Manifest("hello"));
+        catalog.Rescan();
+        Assert.Equal(PluginStatus.Refused, catalog.Find("elsewhere")!.Status);
+        Directory.Delete(Path.Combine(PluginsDir, "elsewhere"), recursive: true);
+        catalog.Rescan();
+        Assert.Null(catalog.Find("elsewhere"));
+        Assert.Equal(PluginStatus.Loaded, catalog.Find("tracklist")!.Status);
     }
 
     // ───── Dependencies ─────
@@ -367,11 +440,11 @@ public sealed class PluginCatalogTests : IDisposable
     // ───── Helpers ─────
 
     /// <summary>Copies the built Hello plugin into <c>plugins/&lt;id&gt;/</c>, with the test's own manifest when given.</summary>
-    private string Install(string id = "hello", string? manifestJson = null)
+    private string Install(string id = "hello", string? manifestJson = null, string? from = null)
     {
         var dir = Path.Combine(PluginsDir, id);
         Directory.CreateDirectory(dir);
-        foreach (var file in Directory.GetFiles(HelloOutput))
+        foreach (var file in Directory.GetFiles(from ?? HelloOutput))
             File.Copy(file, Path.Combine(dir, Path.GetFileName(file)), overwrite: true);
         if (manifestJson is not null)
             File.WriteAllText(Path.Combine(dir, PluginCatalog.ManifestFileName), manifestJson);

@@ -11,15 +11,20 @@
         <DockPanel>
             <!-- Header + toolbar -->
             <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                <Button DockPanel.Dock="Right" Content="Abrir pasta de plugins" Style="{StaticResource GhostButton}" Padding="10,5"
-                        Command="{Binding OpenPluginsFolderCommand}"
-                        ToolTip="{Binding PluginsDirectory}"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Recarregar" Style="{StaticResource GhostButton}" Padding="10,5" Margin="0,0,6,0"
+                            Command="{Binding RescanPluginsCommand}"
+                            ToolTip="Olha a pasta de novo: plugin que você acabou de colocar entra na lista e carrega; um recusado com o problema corrigido também"/>
+                    <Button Content="Abrir pasta de plugins" Style="{StaticResource GhostButton}" Padding="10,5"
+                            Command="{Binding OpenPluginsFolderCommand}"
+                            ToolTip="{Binding PluginsDirectory}"/>
+                </StackPanel>
                 <TextBlock Text="Plugins" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
             </DockPanel>
 
             <!-- What the two destructive-looking actions really do, in words, so nobody has to guess -->
             <TextBlock DockPanel.Dock="Top" Margin="0,0,0,10" Style="{StaticResource Hint}" TextWrapping="Wrap"
-                       Text="Cada plugin é uma pasta em plugins\ (ao lado do .exe) com um plugin.json. Desabilitar tem efeito na hora: a aba some e o plugin para. Desinstalar remove a pasta no próximo start do app — até lá dá pra desfazer."/>
+                       Text="Cada plugin é uma pasta em plugins\ (ao lado do .exe). Desabilitar tem efeito na hora: a aba some e o plugin para. Desinstalar remove a pasta no próximo start do app — até lá dá pra desfazer."/>
 
             <Grid>
                 <!-- Empty state -->

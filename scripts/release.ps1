@@ -36,7 +36,7 @@ $csproj  = Join-Path $repo 'src\PixieDownloader\PixieDownloader.csproj'
 $sdkProj = Join-Path $repo 'src\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj'
 # Os plugins que saem na release, cada um como zip próprio (Hello é só de desenvolvimento e fica de fora).
 $plugins = @(
-    @{ Id = 'tracklist'; Name = 'Tracklist'; Proj = Join-Path $repo 'src\Plugins\Pixie.Tracklist\Pixie.Tracklist.csproj'; Out = Join-Path $repo 'src\Plugins\Pixie.Tracklist\bin\Release\net10.0-windows' }
+    @{ Id = 'tracklist'; Name = 'Tracklist'; Dll = 'Pixie.Tracklist.dll'; Proj = Join-Path $repo 'src\Plugins\Pixie.Tracklist\Pixie.Tracklist.csproj'; Out = Join-Path $repo 'src\Plugins\Pixie.Tracklist\bin\Release\net10.0-windows' }
 )
 $sln     = Join-Path $repo 'PixieDownloader.slnx'
 $license = Join-Path $repo 'LICENSE'
@@ -150,7 +150,7 @@ Write-Host ("  {0,-45} {1,6:N1} MB  {2}" -f $nupkgName, ((Get-Item $nupkgPath).L
 foreach ($pl in $plugins) {
     $plVersion = (Select-String -Path $pl.Proj -Pattern '<Version>([^<]+)</Version>').Matches[0].Groups[1].Value.Trim()
     if (-not $plVersion) { throw "Não achei <Version> em $($pl.Proj)" }
-    if (-not (Test-Path (Join-Path $pl.Out 'plugin.json'))) { throw "O plugin $($pl.Id) não foi buildado em $($pl.Out)" }
+    if (-not (Test-Path (Join-Path $pl.Out $pl.Dll))) { throw "O plugin $($pl.Id) não foi buildado em $($pl.Out)" }
     $zipName = "PixieDownloader-plugin-$($pl.Id)-v$plVersion.zip"
     $zipPath = Join-Path $OutDir $zipName
     $stage   = Join-Path $OutDir "stage-plugin-$($pl.Id)"

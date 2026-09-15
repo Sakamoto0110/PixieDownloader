@@ -1,0 +1,5 @@
+Este plugin usa:
+
+  TagLib# (TagLibSharp.dll) — https://github.com/mono/taglib-sharp
+  Licença LGPL 2.1 — é o que escreve os capítulos ID3 (CHAP/CTOC) no MP3.
+  O DLL vai inalterado, como arquivo separado, e pode ser trocado por outra versão.

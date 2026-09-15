@@ -10,8 +10,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Pixie.Tracklist</RootNamespace>
-    <!-- The plugin's own version — plugin.json says the same; bump both. -->
+    <!-- No plugin.json: the host reads id (folder), name, version, apiVersion and the entry class from the -->
+    <!-- assembly's metadata. So this is the plugin's version, and AssemblyTitle is what the Plugins tab shows. -->
     <Version>1.0.0</Version>
+    <AssemblyTitle>Tracklist</AssemblyTitle>
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
 
@@ -22,7 +24,7 @@
     <!-- The plugin's own dependency: it lands next to the plugin and is resolved from there. ID3v2 CHAP/CTOC -->
     <!-- frames are what podcast players and foobar2000/VLC/mpv read as chapters. -->
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
-    <None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="THIRD-PARTY.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The tests drive TracklistLine (internal) directly, as they did when it lived in the core. -->

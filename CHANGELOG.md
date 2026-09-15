@@ -8,6 +8,8 @@ O bloco da versão é copiado para o corpo da GitHub Release pelo `scripts/relea
 ### Adicionado
 - **Plugin Tracklist** (`PixieDownloader-plugin-tracklist-v1.0.0.zip`, extraia em `plugins\`): ao analisar um vídeo, procura a tracklist na descrição, no comentário fixado, no comentário do canal e nos mais curtidos (os capítulos do YouTube ficam de reserva) e mostra tudo numa aba **Tracklist** — cada fonte com a contagem de faixas, trocar de fonte troca a lista inteira, faixa sem título aparece como tal, e um expander com o relatório cru da detecção. Com "Gravar no MP3 ao baixar" marcado, o download leva a lista pro arquivo como capítulos ID3 (`CHAP`/`CTOC`, que VLC, foobar2000 e mpv mostram) e a árvore completa em `TXXX:PIXIE_TRACKLIST`. Só MP3 por enquanto.
 - **API 1.1 do SDK** (`PixieDownloader.Sdk.1.1.0.nupkg`): `AnalysisCompleted`, `DownloadCompleted` e `RequireAnalysisComments()` no `IPluginHost`. Plugin feito na 1.0 continua carregando.
+- **`plugin.json` virou opcional**: sem ele, o app lê id (a pasta), nome, versão, API e a classe de entrada dos metadados do próprio `.dll`, sem carregar código. O arquivo continua valendo e é obrigatório só quando a convenção não basta (mais de uma classe de entrada, `dependsOn`, id diferente da pasta).
+- **Recarregar** na aba Plugins: olha a pasta de novo sem reiniciar — plugin recém-colocado entra e carrega, recusado com o problema corrigido também.
 
 ### Corrigido
 - O caminho do arquivo entregue por um download simples (sem passo de ffmpeg) apontava pra pasta de staging, já apagada; agora é o caminho final.
@@ -15,6 +17,7 @@ O bloco da versão é copiado para o corpo da GitHub Release pelo `scripts/relea
 
 ### Alterado
 - A análise de vídeo único só busca comentários (+1–2 s) quando um plugin pede — sem o plugin Tracklist, nada muda.
+- Painel de metadados sem o texto explicativo debaixo de "Incluir metadados".
 
 ## [1.5.0] — 2026-09-14
 

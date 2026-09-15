@@ -78,7 +78,57 @@ public sealed class PluginCatalog
             ReadManifest(plugin);
             _plugins.Add(plugin);
         }
+        LoadPending();
 
+        if (_plugins.Count == 0)
+            Emit(LogLevel.Debug, $"Nenhum plugin em {PluginsDirectory}.");
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Looks at the folder again while the app runs: a folder dropped in gets read and loaded, a fixed
+    /// plugin.json (or a replaced DLL) gets another chance, a folder that is gone leaves the list — unless
+    /// its plugin is running, which stays until the app closes. Loaded plugins are never re-read.
+    /// </summary>
+    public void Rescan()
+    {
+        Directory.CreateDirectory(PluginsDirectory);
+        var dirs = Directory.GetDirectories(PluginsDirectory);
+
+        foreach (var plugin in _plugins.ToList())
+        {
+            if (dirs.Any(d => string.Equals(d, plugin.Directory, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            if (plugin.Status == PluginStatus.Loaded)
+                plugin.Detail = "a pasta sumiu — continua rodando até o app fechar";
+            else
+            {
+                _plugins.Remove(plugin);
+                Emit(LogLevel.Info, $"Plugin '{plugin.Id}' saiu da lista: a pasta não existe mais.");
+            }
+        }
+
+        foreach (var dir in dirs)
+        {
+            var plugin = Find(Path.GetFileName(dir));
+            if (plugin is null)
+            {
+                plugin = new InstalledPlugin(dir);
+                _plugins.Add(plugin);
+                Emit(LogLevel.Info, $"Plugin '{plugin.Id}' encontrado em {dir}.");
+            }
+            else if (plugin.Status == PluginStatus.Loaded)
+                continue;
+            ReadManifest(plugin);
+        }
+        _plugins.Sort((a, b) => string.Compare(a.Id, b.Id, StringComparison.OrdinalIgnoreCase));
+        LoadPending();
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Loads every <see cref="PluginStatus.Pending"/> plugin, each only after everything it depends on.</summary>
+    private void LoadPending()
+    {
         var pending = _plugins.Where(p => p.Status == PluginStatus.Pending).ToList();
         bool progress = true;
         while (pending.Count > 0 && progress)
@@ -104,10 +154,6 @@ public sealed class PluginCatalog
         }
         foreach (var plugin in pending)   // a depends on b depends on a
             Refuse(plugin, $"dependência circular: {string.Join(", ", plugin.Manifest!.DependsOn)}");
-
-        if (_plugins.Count == 0)
-            Emit(LogLevel.Debug, $"Nenhum plugin em {PluginsDirectory}.");
-        Changed?.Invoke(this, EventArgs.Empty);
     }
 
     private void ApplyPendingUninstalls()
@@ -146,22 +192,29 @@ public sealed class PluginCatalog
             return;
         }
 
-        var manifestPath = Path.Combine(plugin.Directory, ManifestFileName);
-        if (!File.Exists(manifestPath))
-        {
-            Refuse(plugin, $"sem {ManifestFileName}");
-            return;
-        }
-
+        // plugin.json when there is one; otherwise the assembly's own metadata says everything it would.
         PluginManifest manifest;
-        try
+        var manifestPath = Path.Combine(plugin.Directory, ManifestFileName);
+        if (File.Exists(manifestPath))
         {
-            manifest = JsonSerializer.Deserialize<PluginManifest>(File.ReadAllText(manifestPath), ManifestJson)
-                ?? throw new JsonException("arquivo vazio");
+            try
+            {
+                manifest = JsonSerializer.Deserialize<PluginManifest>(File.ReadAllText(manifestPath), ManifestJson)
+                    ?? throw new JsonException("arquivo vazio");
+            }
+            catch (JsonException ex)
+            {
+                Refuse(plugin, $"{ManifestFileName} inválido: {ex.Message}");
+                return;
+            }
         }
-        catch (JsonException ex)
+        else if (PluginManifestReader.TryRead(plugin.Directory, out var problem) is { } derived)
         {
-            Refuse(plugin, $"{ManifestFileName} inválido: {ex.Message}");
+            manifest = derived;
+        }
+        else
+        {
+            Refuse(plugin, problem!);
             return;
         }
         plugin.Manifest = manifest;   // kept even when refused below, so the tab shows the declared name

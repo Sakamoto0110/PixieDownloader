@@ -83,6 +83,7 @@ public sealed class MainViewModel : ObservableObject
         CancelUninstallPluginCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) _plugins.CancelUninstall(p.Id); });
         OpenPluginFolderCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) OpenFolderPath?.Invoke(p.Directory); });
         OpenPluginsFolderCommand = new RelayCommand(() => OpenFolderPath?.Invoke(_plugins.PluginsDirectory));
+        RescanPluginsCommand = new RelayCommand(_plugins.Rescan);
         OpenReleasePageCommand = new RelayCommand(OpenReleasePage);
         SimulateCommand = new AsyncRelayCommand(Simulate);
         GetFilenameCommand = new AsyncRelayCommand(GetFilename);
@@ -168,6 +169,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand<PluginItemViewModel> CancelUninstallPluginCommand { get; }
     public RelayCommand<PluginItemViewModel> OpenPluginFolderCommand { get; }
     public RelayCommand OpenPluginsFolderCommand { get; }
+    public RelayCommand RescanPluginsCommand { get; }
     public RelayCommand OpenReleasePageCommand { get; }
     public AsyncRelayCommand SimulateCommand { get; }
     public AsyncRelayCommand GetFilenameCommand { get; }

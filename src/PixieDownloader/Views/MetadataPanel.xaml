@@ -12,8 +12,8 @@
     <StackPanel Visibility="{Binding HasMetadataItems, Converter={StaticResource BoolToVis}}">
         <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,1,0,0" Margin="0,0,0,10"/>
 
-        <CheckBox IsThreeState="False" IsChecked="{Binding IncludeMetadataState, Mode=TwoWay}" FontWeight="SemiBold"
-                  Content="Incluir metadados:"
+        <CheckBox IsThreeState="False" IsChecked="{Binding IncludeMetadataState, Mode=TwoWay}" FontWeight="SemiBold" Margin="0,0,0,6"
+                  Content="Incluir metadados"
                   ToolTip="Marcado: todos os campos abaixo vão pro arquivo. Desmarcado: nenhum (o mesmo que “Embutir metadados” nas opções avançadas). Meio-termo: alguns campos excluídos.">
             <CheckBox.Style>
                 <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
@@ -55,8 +55,6 @@
                 </Style>
             </CheckBox.Style>
         </CheckBox>
-        <TextBlock Text="O que o yt-dlp encontrou e vai embutir no arquivo (a escolha por campo fica salva)."
-                   Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="26,2,0,6"/>
 
         <ItemsControl ItemsSource="{Binding MetadataItems}">
             <ItemsControl.ItemTemplate>

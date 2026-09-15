@@ -1,9 +1,9 @@
 # PixieDownloader.Sdk
 
 O contrato de plugin do [PixieDownloader](https://github.com/Sakamoto0110/PixieDownloader).
-Um plugin é uma pasta `plugins/<id>/` ao lado do `PixieDownloader.exe` com um
-`plugin.json` e um assembly; o app carrega cada uma num `AssemblyLoadContext`
-próprio e conversa com o plugin só por estes tipos:
+Um plugin é uma pasta `plugins/<id>/` ao lado do `PixieDownloader.exe` com o
+assembly dentro; o app carrega cada uma num `AssemblyLoadContext` próprio e
+conversa com o plugin só por estes tipos:
 
 - `IPixiePlugin` — o ponto de entrada: `Configure(IPluginHost)`.
 - `IPluginHost` — o que o host oferece: `Downloads` (`IYtDlpService`, o mesmo
@@ -41,7 +41,27 @@ plugin** — `ExcludeAssets="runtime"` cuida disso:
 Se o pacote veio como asset da release em vez do nuget.org:
 `dotnet nuget add source <pasta-onde-está-o-.nupkg> --name pixie`.
 
-## `plugin.json`
+## Como o app reconhece o plugin
+
+Sem arquivo nenhum além do `.dll`: o host lê os metadados do assembly (sem
+carregar código) e tira dali tudo que precisa —
+
+| o quê | de onde |
+|---|---|
+| id | o nome da pasta |
+| assembly | o único `.dll` da pasta que referencia `PixieDownloader.Sdk` |
+| classe de entrada | a única classe que implementa `IPixiePlugin` |
+| nome | `<AssemblyTitle>` do csproj (sem ele, o id) |
+| versão | `<Version>` do csproj |
+| apiVersion | a versão deste pacote que você referenciou |
+
+O host aceita o plugin quando o major do apiVersion é o mesmo e o minor não é
+mais novo que o dele — e recusa, com o motivo nos logs e na aba Plugins, antes
+de carregar qualquer código.
+
+Um `plugin.json` na pasta **substitui** tudo isso, e é obrigatório quando a
+convenção não basta: mais de uma classe `IPixiePlugin` no assembly, dependência
+de outro plugin (`dependsOn`), id diferente da pasta.
 
 ```json
 {
@@ -54,10 +74,6 @@ Se o pacote veio como asset da release em vez do nuget.org:
   "dependsOn": []
 }
 ```
-
-`apiVersion` é a versão deste pacote (major.minor). O host aceita o plugin quando
-o major é o mesmo e o minor não é mais novo que o dele — e recusa, com o motivo
-nos logs, antes de carregar qualquer código.
 
 ## Plugin mínimo
 
@@ -97,3 +113,5 @@ public sealed class HelloPlugin : IPixiePlugin, IUiContribution
   app fechar — WPF não permite descarregar de verdade.
 - **Desinstalar** apaga a pasta `plugins/<id>/` no próximo start (o arquivo fica
   em uso até lá). `data/<id>/` fica: é do usuário.
+- **Recarregar** (aba Plugins) olha a pasta de novo sem reiniciar: plugin novo
+  entra e carrega, um recusado com o problema corrigido também.
