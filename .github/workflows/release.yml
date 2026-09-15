@@ -40,7 +40,6 @@ jobs:
           gh release create $tag --verify-tag --title "PixieDownloader $($tag.TrimStart('v'))" --notes-file bin/release/RELEASE_NOTES.md --generate-notes @assets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-
   nuget:
     needs: release
     uses: ./.github/workflows/publish-nuget.yml
