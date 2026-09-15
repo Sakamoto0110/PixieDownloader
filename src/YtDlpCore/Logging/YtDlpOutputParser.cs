@@ -109,6 +109,31 @@ public static partial class YtDlpOutputParser
         return string.IsNullOrEmpty(path) ? null : path;
     }
 
+    /// <summary>
+    /// The final move yt-dlp does when <c>-P temp:</c> and <c>-P home:</c> differ:
+    /// <c>[MoveFiles] Moving file "&lt;temp path&gt;" to "&lt;final path&gt;"</c>. The Destination lines before it
+    /// all point into temp, so this is the only line that says where the file really ended up.
+    /// </summary>
+    public static (string From, string To)? TryParseMovedFile(string line)
+    {
+        if (string.IsNullOrEmpty(line))
+            return null;
+
+        const string marker = "Moving file \"";
+        var idx = line.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+            return null;
+
+        var rest = line[(idx + marker.Length)..];
+        var quote = rest.IndexOf("\" to \"", StringComparison.Ordinal);
+        if (quote < 0 || !rest.EndsWith('"'))
+            return null;
+
+        var from = rest[..quote];
+        var to = rest[(quote + 6)..^1];
+        return from.Length == 0 || to.Length == 0 ? null : (from, to);
+    }
+
     // ffmpeg -progress pipe:1 emits key=value blocks; the elapsed output position comes as
     // out_time_us=1234567 (newer builds), out_time_ms=1234567 (same unit despite the name, older builds)
     // or out_time=00:00:01.234567. A negative/"N/A" value is emitted before the first frame.

@@ -80,6 +80,25 @@ public class YtDlpOutputParserTests
         Assert.Null(YtDlpOutputParser.TryParseDestination("[download] 42% of 5MiB"));
     }
 
+    [Fact]
+    public void TryParseMovedFile_reads_both_paths_of_the_final_move()
+    {
+        var moved = YtDlpOutputParser.TryParseMovedFile(@"[MoveFiles] Moving file ""C:\app\.~downloads\job-1\don't go.. (mix).mp3"" to ""C:\Users\me\Music\don't go.. (mix).mp3""");
+
+        Assert.NotNull(moved);
+        Assert.Equal(@"C:\app\.~downloads\job-1\don't go.. (mix).mp3", moved.Value.From);
+        Assert.Equal(@"C:\Users\me\Music\don't go.. (mix).mp3", moved.Value.To);
+    }
+
+    [Theory]
+    [InlineData("[MoveFiles] Moving file \"a.mp3\" to")]
+    [InlineData("[download] Destination: a.mp3")]
+    [InlineData("")]
+    public void TryParseMovedFile_returns_null_for_anything_else(string line)
+    {
+        Assert.Null(YtDlpOutputParser.TryParseMovedFile(line));
+    }
+
     [Theory]
     [InlineData("[download] Downloading item 3 of 12", 3, 12)]
     [InlineData("[download] Downloading video 1 of 5", 1, 5)]

@@ -60,7 +60,7 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         var ytDlp = RequireYtDlp();
         Emit(LogLevel.Info, "Core", $"Analisando URL ({(treatAsPlaylist ? "playlist" : "vídeo único")})...", url);
 
-        var args = new List<string> { "--dump-single-json", treatAsPlaylist ? "--flat-playlist" : "--no-playlist", "--no-warnings" };
+        var args = new List<string> { "--encoding", "utf-8", "--dump-single-json", treatAsPlaylist ? "--flat-playlist" : "--no-playlist", "--no-warnings" };
         if (fetchComments)
         {
             // Only the top of the thread: the pinned comment always leads it, and the uploader's own
@@ -140,6 +140,12 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
             var dest = YtDlpOutputParser.TryParseDestination(line);
             if (dest is not null && (destPath is null || dest.EndsWith(primaryExt, StringComparison.OrdinalIgnoreCase)))
                 destPath = dest;
+
+            // Without our own ffmpeg pass the file is downloaded into the job folder (-P temp) and moved to
+            // the output folder at the very end; only this line carries the delivered path.
+            var moved = YtDlpOutputParser.TryParseMovedFile(line);
+            if (moved is { } m && (destPath is null || string.Equals(m.From, destPath, StringComparison.OrdinalIgnoreCase)))
+                destPath = m.To;
 
             var p = YtDlpOutputParser.TryParseProgress(line);
             if (p is not null)
@@ -558,7 +564,10 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
     private List<string> BuildDownloadArgs(DownloadRequest r, string tempDir, string? workDir = null)
     {
         var bitrate = r.Audio.Bitrate.ToUpperInvariant().Trim(); // "192k" -> "192K"
-        var args = new List<string>();
+        // With stdout on a pipe yt-dlp writes in the console code page and silently drops what it can't
+        // encode — the "｜" and "⧸" it puts in file names for one. --encoding makes it write UTF-8, which is
+        // what the runner decodes, so the paths in its output (and in DownloadResult) are the real ones.
+        var args = new List<string> { "--encoding", "utf-8" };
         // When a post-download ffmpeg pass is needed, everything lands in our private work folder
         // (home == temp), so we can locate the real files on disk and deliver them ourselves.
         var homeDir = workDir ?? r.OutputDirectory;
