@@ -342,6 +342,28 @@ public sealed class PluginCatalog
             plugin.Host?.Shutdown();
     }
 
+    // ───── What the app tells the plugins (API 1.1) ─────
+    // The view model calls these at the two moments a plugin can act on: an analysis just finished, a
+    // download just delivered its file. Each loaded plugin gets its own event through its PluginHost, which
+    // also isolates a throwing handler. All on the UI thread.
+
+    /// <summary>True while any loaded plugin asked for comments: the app's single-video analyses then pass <c>fetchComments</c>.</summary>
+    public bool WantsAnalysisComments => _plugins.Any(p => p.Host?.WantsAnalysisComments == true);
+
+    public void RaiseAnalysisCompleted(string url, UrlInfo info)
+    {
+        var e = new AnalysisCompletedEventArgs(url, info);
+        foreach (var plugin in _plugins.Where(p => p.Status == PluginStatus.Loaded).ToList())
+            plugin.Host?.RaiseAnalysisCompleted(e);
+    }
+
+    public void RaiseDownloadCompleted(DownloadRequest request, DownloadResult result)
+    {
+        var e = new DownloadCompletedEventArgs(request, result);
+        foreach (var plugin in _plugins.Where(p => p.Status == PluginStatus.Loaded).ToList())
+            plugin.Host?.RaiseDownloadCompleted(e);
+    }
+
     // ───── Helpers ─────
 
     public InstalledPlugin? Find(string id) =>

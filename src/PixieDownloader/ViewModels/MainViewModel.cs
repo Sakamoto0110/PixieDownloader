@@ -1136,12 +1136,12 @@ public sealed class MainViewModel : ObservableObject
         StatusText = "Analisando URL...";
         try
         {
-            var info = await _service.AnalyzeUrlAsync(url, TreatAsPlaylist, fetchComments: TracklistDebugReport, cts.Token);
+            // Comments cost one or two seconds and only a plugin reads them (the tracklist detector).
+            var info = await _service.AnalyzeUrlAsync(url, TreatAsPlaylist, fetchComments: _plugins.WantsAnalysisComments, cts.Token);
             ApplyUrlInfo(info);
             _settings.AddRecentUrl(url, TitleOf(info));
             StatusText = "Pronto";
-            if (TracklistDebugReport && info is VideoUrlInfo single)
-                ReportTracklist(single.Video);
+            _plugins.RaiseAnalysisCompleted(url, info);
         }
         catch (OperationCanceledException)
         {
@@ -1577,6 +1577,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 job.MarkDone(job.Partner is null ? "Concluído" : "Baixado");
                 job.Partner?.MarkDone();
+                _plugins.RaiseDownloadCompleted(job.Request, result);
             }
             else
             {
@@ -2384,31 +2385,6 @@ public sealed class MainViewModel : ObservableObject
         // "Embutir metadados (ID3)" in the advanced options is the same switch as the preview panel's master.
         if (e.PropertyName == nameof(AudioSettings.EmbedMetadata))
             SyncMetadataItemsFromSettings();
-    }
-
-    // ───────────────────────── Tracklist (detecção na análise) ─────────────────────────
-    // With the switch on, every single-video analysis also fetches the top comments (+1-2 s) and runs the
-    // heuristic tracklist detector over the description, the pinned comment and the others, dumping a
-    // report (URL / title / what was found) into the debug tab — how the heuristic was tuned against real
-    // videos. Off until the detector becomes the 1.6 plugin: nothing shows the result yet, so nobody pays
-    // for the comments. Flip it to tune against a new video.
-    private const bool TracklistDebugReport = false;
-
-    /// <summary>What the detector found for the last analysed single video (null until one is analysed).</summary>
-    public TracklistReport? LastTracklistReport { get; private set; }
-
-    private void ReportTracklist(VideoInfo video)
-    {
-        try
-        {
-            LastTracklistReport = TracklistExtractor.Analyze(video);
-            AppendDebug(TracklistReportFormatter.Format(video, LastTracklistReport));
-        }
-        catch (Exception ex)
-        {
-            // A parsing surprise must never break the analysis itself — it's diagnostic output.
-            AppendDebug($"[tracklist] erro ao detectar: {ex.Message}\n");
-        }
     }
 
     // ───────────────────────── Metadados (painel de pré-visualização) ─────────────────────────

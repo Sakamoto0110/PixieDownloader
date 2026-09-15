@@ -40,4 +40,25 @@ public interface IPluginHost
     /// provides it may not be installed, or may be disabled right now.
     /// </summary>
     bool TryGetCapability(string id, [NotNullWhen(true)] out Delegate? implementation);
+
+    // ───── Since API 1.1 ─────
+
+    /// <summary>
+    /// Raised on the UI thread after every analysis the user runs — single video or playlist — with the same
+    /// result the preview shows. Nothing is raised for analyses that failed or were cancelled.
+    /// </summary>
+    event EventHandler<AnalysisCompletedEventArgs>? AnalysisCompleted;
+
+    /// <summary>
+    /// Raised on the UI thread when a download job has delivered its final file. Work on the file (tagging,
+    /// copying) belongs on a background task — the queue keeps moving meanwhile.
+    /// </summary>
+    event EventHandler<DownloadCompletedEventArgs>? DownloadCompleted;
+
+    /// <summary>
+    /// While the returned registration lives, the host's single-video analyses also fetch the top comments
+    /// (<see cref="VideoInfo.Comments"/>, pinned first — one or two seconds more per analysis). Dispose it to
+    /// stop asking; the host drops it on its own when the plugin is disabled.
+    /// </summary>
+    IDisposable RequireAnalysisComments();
 }

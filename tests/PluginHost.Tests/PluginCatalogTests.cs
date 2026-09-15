@@ -268,6 +268,54 @@ public sealed class PluginCatalogTests : IDisposable
         Assert.Equal("A capacidade 'hello.greet' já está registrada pelo plugin 'hello'.", twin.Detail);
     }
 
+    // ───── API 1.1: what the app tells the plugins ─────
+
+    [Fact]
+    public void Analysis_events_and_the_comments_request_reach_a_loaded_plugin_and_die_with_it()
+    {
+        Install("quiet", Manifest("quiet", entryType: Quiet));
+        var catalog = NewCatalog();
+        Assert.False(catalog.WantsAnalysisComments);   // nobody loaded yet
+
+        catalog.Initialize();
+
+        // QuietPlugin asked for comments in Configure, so the app's analyses will fetch them.
+        Assert.True(catalog.WantsAnalysisComments);
+
+        var url = "https://www.youtube.com/watch?v=abc";
+        var info = new VideoUrlInfo { OriginalUrl = url, Video = new VideoInfo("abc", "Mix", null, null, null, url) };
+        catalog.RaiseAnalysisCompleted(url, info);
+
+        var host = catalog.Plugins[0].Host!;
+        Assert.True(host.TryGetCapability("quiet.lastAnalysis", out var last));
+        Assert.Equal(url, Assert.IsType<Func<string?>>(last)());
+
+        // Disabled: no more events, no more comment requests, and the capability is gone.
+        catalog.Disable("quiet");
+        Assert.False(catalog.WantsAnalysisComments);
+        catalog.RaiseAnalysisCompleted("https://www.youtube.com/watch?v=xyz", info);   // must not throw, must not reach it
+        Assert.False(host.TryGetCapability("quiet.lastAnalysis", out _));
+    }
+
+    [Fact]
+    public void A_throwing_event_handler_is_logged_and_does_not_reach_the_host()
+    {
+        Install("quiet", Manifest("quiet", entryType: Quiet));
+        var catalog = NewCatalog();
+        var logged = new List<LogEntry>();
+        catalog.LogEmitted += (_, e) => logged.Add(e);
+        catalog.Initialize();
+        catalog.Plugins[0].Host!.DownloadCompleted += (_, _) => throw new InvalidOperationException("boom");
+
+        var request = new DownloadRequest("https://x", _root, "%(title)s.%(ext)s", new AudioOptions(), new AdvancedOptions());
+        catalog.RaiseDownloadCompleted(request, new DownloadResult("https://x", true, null, null, TimeSpan.Zero));
+
+        var error = Assert.Single(logged, e => e.Level == LogLevel.Error);
+        Assert.Equal("Plugin:quiet", error.Source);
+        Assert.Contains("DownloadCompleted", error.Message);
+        Assert.Contains("boom", error.Message);
+    }
+
     // ───── Uninstall ─────
 
     [Fact]

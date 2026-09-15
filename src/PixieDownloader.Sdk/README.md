@@ -8,7 +8,10 @@ próprio e conversa com o plugin só por estes tipos:
 - `IPixiePlugin` — o ponto de entrada: `Configure(IPluginHost)`.
 - `IPluginHost` — o que o host oferece: `Downloads` (`IYtDlpService`, o mesmo
   serviço que o app usa), `DataDirectory`, `Log`, `ShutdownToken`, o `Manifest`
-  do próprio plugin e o registro de capacidades.
+  do próprio plugin e o registro de capacidades. Desde a API 1.1: os eventos
+  `AnalysisCompleted` (toda análise que o usuário fez) e `DownloadCompleted`
+  (arquivo final entregue), e `RequireAnalysisComments()` pra análise trazer os
+  comentários enquanto o plugin quiser.
 - `IUiContribution` — implemente na mesma classe se o plugin tem uma aba.
 - `PluginManifest` — o `plugin.json` tipado.
 
@@ -30,7 +33,7 @@ plugin** — `ExcludeAssets="runtime"` cuida disso:
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="PixieDownloader.Sdk" Version="1.0.0" ExcludeAssets="runtime" />
+    <PackageReference Include="PixieDownloader.Sdk" Version="1.1.0" ExcludeAssets="runtime" />
   </ItemGroup>
 </Project>
 ```
@@ -45,7 +48,7 @@ Se o pacote veio como asset da release em vez do nuget.org:
   "id": "hello",
   "name": "Hello",
   "version": "0.1.0",
-  "apiVersion": "1.0",
+  "apiVersion": "1.1",
   "assemblyFile": "Pixie.Hello.dll",
   "entryType": "Pixie.Hello.HelloPlugin",
   "dependsOn": []

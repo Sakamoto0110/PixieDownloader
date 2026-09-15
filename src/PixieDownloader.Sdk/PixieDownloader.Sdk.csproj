@@ -12,7 +12,7 @@
     <!-- The apiVersion. Independent of the app's version: adding a member to a public interface here is a -->
     <!-- minor bump, changing or removing one is a major. It is also the package version, so "which API does -->
     <!-- this exe carry" and "which package do I reference" are the same number (SdkVersion.cs reads it back). -->
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <!-- IntelliSense for plugin authors: the XML docs travel in the package next to the DLLs. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
