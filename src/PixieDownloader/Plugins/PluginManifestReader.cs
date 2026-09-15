@@ -23,53 +23,23 @@ internal static class PluginManifestReader
     private static readonly string SdkNamespace = typeof(IPixiePlugin).Namespace!;
     private static readonly string EntryInterface = nameof(IPixiePlugin);
 
-    /// <summary>The manifest, or null with <paramref name="problem"/> saying why (for the Plugins tab, in Portuguese).</summary>
+    /// <summary>A folder plugin: the manifest, or null with <paramref name="problem"/> saying why (for the Plugins tab, in Portuguese).</summary>
     public static PluginManifest? TryRead(string directory, out string? problem)
     {
         var id = Path.GetFileName(directory);
         var found = new List<PluginManifest>();
-        string? ambiguous = null;
+        string? firstProblem = null;
         bool sawSdkReference = false;
 
         foreach (var dll in Directory.GetFiles(directory, "*.dll").Order(StringComparer.OrdinalIgnoreCase))
         {
-            try
+            var manifest = TryReadAssembly(dll, id, out var why, out var referencesSdk);
+            if (manifest is not null)
+                found.Add(manifest);
+            else if (referencesSdk)
             {
-                using var stream = File.OpenRead(dll);
-                using var pe = new PEReader(stream);
-                if (!pe.HasMetadata)
-                    continue;
-                var md = pe.GetMetadataReader();
-
-                var sdk = FindSdkReference(md);
-                if (sdk is null)
-                    continue;   // a dependency of the plugin (TagLibSharp and the like), not the plugin
                 sawSdkReference = true;
-
-                var entries = FindEntryTypes(md);
-                if (entries.Count == 0)
-                    continue;   // references the Sdk but has no plugin class — a helper library
-                if (entries.Count > 1)
-                {
-                    ambiguous = $"{Path.GetFileName(dll)} tem mais de uma classe que implementa {EntryInterface} ({string.Join(", ", entries)}) — diga qual no plugin.json";
-                    continue;
-                }
-
-                var assembly = md.GetAssemblyDefinition();
-                var name = ReadAssemblyTitle(md, assembly);
-                found.Add(new PluginManifest
-                {
-                    Id = id,
-                    Name = string.IsNullOrWhiteSpace(name) || name == md.GetString(assembly.Name) ? Capitalize(id) : name,
-                    Version = assembly.Version.ToString(3),
-                    ApiVersion = $"{sdk.Major}.{sdk.Minor}",
-                    AssemblyFile = Path.GetFileName(dll),
-                    EntryType = entries[0],
-                });
-            }
-            catch (BadImageFormatException)
-            {
-                // not a .NET assembly (a native DLL the plugin carries) — skip
+                firstProblem ??= why;
             }
         }
 
@@ -80,11 +50,67 @@ internal static class PluginManifestReader
         }
         problem = found.Count > 1
             ? $"mais de um .dll da pasta é um plugin ({string.Join(", ", found.Select(f => f.AssemblyFile))}) — diga qual no plugin.json"
-            : ambiguous
-              ?? (sawSdkReference
-                    ? $"nenhuma classe implementa {EntryInterface} no .dll que referencia o {SdkAssemblyName}"
-                    : $"sem plugin.json e sem um .dll que referencie o {SdkAssemblyName}");
+            : sawSdkReference ? firstProblem : $"sem plugin.json e sem um .dll que referencie o {SdkAssemblyName}";
         return null;
+    }
+
+    /// <summary>A single assembly (a loose plugin, or one file of a folder plugin) under the id given.</summary>
+    public static PluginManifest? TryReadAssembly(string dll, string id, out string? problem) =>
+        TryReadAssembly(dll, id, out problem, out _);
+
+    private static PluginManifest? TryReadAssembly(string dll, string id, out string? problem, out bool referencesSdk)
+    {
+        referencesSdk = false;
+        try
+        {
+            using var stream = File.OpenRead(dll);
+            using var pe = new PEReader(stream);
+            if (!pe.HasMetadata)
+            {
+                problem = $"{Path.GetFileName(dll)} não é um assembly .NET";
+                return null;
+            }
+            var md = pe.GetMetadataReader();
+
+            var sdk = FindSdkReference(md);
+            if (sdk is null)
+            {
+                // A dependency of some plugin (TagLibSharp and the like), not a plugin — loose in the root, it is in the wrong place.
+                problem = $"{Path.GetFileName(dll)} não referencia o {SdkAssemblyName}: não é um plugin (se é dependência de um, ele precisa de uma pasta própria)";
+                return null;
+            }
+            referencesSdk = true;
+
+            var entries = FindEntryTypes(md);
+            if (entries.Count == 0)
+            {
+                problem = $"nenhuma classe implementa {EntryInterface} em {Path.GetFileName(dll)}";
+                return null;
+            }
+            if (entries.Count > 1)
+            {
+                problem = $"{Path.GetFileName(dll)} tem mais de uma classe que implementa {EntryInterface} ({string.Join(", ", entries)}) — diga qual no plugin.json";
+                return null;
+            }
+
+            var assembly = md.GetAssemblyDefinition();
+            var name = ReadAssemblyTitle(md, assembly);
+            problem = null;
+            return new PluginManifest
+            {
+                Id = id,
+                Name = string.IsNullOrWhiteSpace(name) || name == md.GetString(assembly.Name) ? Capitalize(id) : name,
+                Version = assembly.Version.ToString(3),
+                ApiVersion = $"{sdk.Major}.{sdk.Minor}",
+                AssemblyFile = Path.GetFileName(dll),
+                EntryType = entries[0],
+            };
+        }
+        catch (BadImageFormatException)
+        {
+            problem = $"{Path.GetFileName(dll)} não é um assembly .NET";
+            return null;
+        }
     }
 
     private static Version? FindSdkReference(MetadataReader md)

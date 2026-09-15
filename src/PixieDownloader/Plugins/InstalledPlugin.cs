@@ -20,22 +20,39 @@ public enum PluginStatus
 }
 
 /// <summary>
-/// One folder under <c>plugins/</c>, whatever is in it — listed even when nothing loads, so the Plugins tab can
-/// show a broken or refused plugin and offer to uninstall it. Mutated only by <see cref="PluginCatalog"/>, on
-/// the UI thread.
+/// One plugin as found under <c>plugins/</c> — a folder (a plugin that carries dependencies of its own, kept
+/// apart so they never mix with anyone else's) or a single <c>.dll</c> loose in the root (a plugin that needs
+/// nothing but itself). Listed even when nothing loads, so the Plugins tab can show a broken or refused plugin
+/// and offer to uninstall it. Mutated only by <see cref="PluginCatalog"/>, on the UI thread.
 /// </summary>
 public sealed class InstalledPlugin
 {
-    public InstalledPlugin(string directory)
+    private InstalledPlugin(string id, string directory, string? looseAssemblyPath)
     {
+        Id = id;
         Directory = directory;
-        Id = Path.GetFileName(directory);
+        LooseAssemblyPath = looseAssemblyPath;
     }
 
-    /// <summary>The folder name. Equal to <see cref="PluginManifest.Id"/> whenever the manifest is accepted.</summary>
+    /// <summary>A folder plugin: the folder name is the id.</summary>
+    public static InstalledPlugin InFolder(string directory) => new(Path.GetFileName(directory), directory, null);
+
+    /// <summary>A loose plugin: <c>plugins/Pixie.Hello.dll</c> has the id <c>Pixie.Hello</c>.</summary>
+    public static InstalledPlugin Loose(string assemblyPath) => new(Path.GetFileNameWithoutExtension(assemblyPath), Path.GetDirectoryName(assemblyPath)!, assemblyPath);
+
+    /// <summary>The folder name, or the file name without <c>.dll</c> for a loose plugin. Equal to <see cref="PluginManifest.Id"/> whenever the manifest is accepted.</summary>
     public string Id { get; }
 
+    /// <summary>The plugin's own folder — for a loose plugin, <c>plugins/</c> itself.</summary>
     public string Directory { get; }
+
+    /// <summary>The DLL of a loose plugin; null for a folder plugin.</summary>
+    public string? LooseAssemblyPath { get; }
+
+    public bool IsLoose => LooseAssemblyPath is not null;
+
+    /// <summary>What to show and open: the folder, or the DLL itself.</summary>
+    public string Location => LooseAssemblyPath ?? Directory;
 
     /// <summary>Set as soon as <c>plugin.json</c> parses, even if the plugin is then refused — the tab still shows its name.</summary>
     public PluginManifest? Manifest { get; internal set; }

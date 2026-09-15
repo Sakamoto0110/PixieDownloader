@@ -72,9 +72,8 @@ public sealed class PluginCatalog
         Directory.CreateDirectory(PluginsDirectory);
         ApplyPendingUninstalls();
 
-        foreach (var dir in Directory.GetDirectories(PluginsDirectory).Order(StringComparer.OrdinalIgnoreCase))
+        foreach (var plugin in FindInstalled())
         {
-            var plugin = new InstalledPlugin(dir);
             ReadManifest(plugin);
             _plugins.Add(plugin);
         }
@@ -93,29 +92,29 @@ public sealed class PluginCatalog
     public void Rescan()
     {
         Directory.CreateDirectory(PluginsDirectory);
-        var dirs = Directory.GetDirectories(PluginsDirectory);
+        var found = FindInstalled();
 
         foreach (var plugin in _plugins.ToList())
         {
-            if (dirs.Any(d => string.Equals(d, plugin.Directory, StringComparison.OrdinalIgnoreCase)))
+            if (found.Any(f => string.Equals(f.Location, plugin.Location, StringComparison.OrdinalIgnoreCase)))
                 continue;
             if (plugin.Status == PluginStatus.Loaded)
-                plugin.Detail = "a pasta sumiu — continua rodando até o app fechar";
+                plugin.Detail = (plugin.IsLoose ? "o arquivo sumiu" : "a pasta sumiu") + " — continua rodando até o app fechar";
             else
             {
                 _plugins.Remove(plugin);
-                Emit(LogLevel.Info, $"Plugin '{plugin.Id}' saiu da lista: a pasta não existe mais.");
+                Emit(LogLevel.Info, $"Plugin '{plugin.Id}' saiu da lista: {plugin.Location} não existe mais.");
             }
         }
 
-        foreach (var dir in dirs)
+        foreach (var candidate in found)
         {
-            var plugin = Find(Path.GetFileName(dir));
+            var plugin = _plugins.FirstOrDefault(p => string.Equals(p.Location, candidate.Location, StringComparison.OrdinalIgnoreCase));
             if (plugin is null)
             {
-                plugin = new InstalledPlugin(dir);
+                plugin = candidate;
                 _plugins.Add(plugin);
-                Emit(LogLevel.Info, $"Plugin '{plugin.Id}' encontrado em {dir}.");
+                Emit(LogLevel.Info, $"Plugin '{plugin.Id}' encontrado em {plugin.Location}.");
             }
             else if (plugin.Status == PluginStatus.Loaded)
                 continue;
@@ -156,6 +155,21 @@ public sealed class PluginCatalog
             Refuse(plugin, $"dependência circular: {string.Join(", ", plugin.Manifest!.DependsOn)}");
     }
 
+    /// <summary>
+    /// What is under <c>plugins/</c>, in id order: every subfolder (a plugin with dependencies of its own) and
+    /// every <c>.dll</c> loose in the root (a plugin that needs nothing else). A loose DLL that is somebody's
+    /// dependency rather than a plugin gets refused when read — the hint to give that plugin a folder.
+    /// </summary>
+    private List<InstalledPlugin> FindInstalled() =>
+        Directory.GetDirectories(PluginsDirectory).Select(InstalledPlugin.InFolder)
+            .Concat(Directory.GetFiles(PluginsDirectory, "*.dll").Select(InstalledPlugin.Loose))
+            .OrderBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>The uninstall marker: <c>.uninstall</c> inside a folder plugin, <c>&lt;name&gt;.dll.uninstall</c> next to a loose one.</summary>
+    private static string MarkerPath(InstalledPlugin plugin) =>
+        plugin.IsLoose ? plugin.LooseAssemblyPath + UninstallMarkerFileName : Path.Combine(plugin.Directory, UninstallMarkerFileName);
+
     private void ApplyPendingUninstalls()
     {
         foreach (var dir in Directory.GetDirectories(PluginsDirectory))
@@ -173,6 +187,22 @@ public sealed class PluginCatalog
                 Emit(LogLevel.Warning, $"Não consegui remover a pasta do plugin '{Path.GetFileName(dir)}': {ex.Message}. Fica para o próximo start.", ex);
             }
         }
+
+        // A loose plugin: the DLL, the build-output siblings a person may have dropped next to it, and the marker.
+        foreach (var marker in Directory.GetFiles(PluginsDirectory, "*.dll" + UninstallMarkerFileName))
+        {
+            var id = Path.GetFileNameWithoutExtension(marker[..^UninstallMarkerFileName.Length]);
+            try
+            {
+                foreach (var suffix in new[] { ".dll", ".pdb", ".deps.json", ".runtimeconfig.json", ".xml", ".dll" + UninstallMarkerFileName })
+                    File.Delete(Path.Combine(PluginsDirectory, id + suffix));   // no-op when absent
+                Emit(LogLevel.Info, $"Plugin '{id}' desinstalado (arquivo removido).");
+            }
+            catch (Exception ex)
+            {
+                Emit(LogLevel.Warning, $"Não consegui remover o plugin '{id}': {ex.Message}. Fica para o próximo start.", ex);
+            }
+        }
     }
 
     // ───── Manifest ─────
@@ -185,17 +215,23 @@ public sealed class PluginCatalog
     private void ReadManifest(InstalledPlugin plugin)
     {
         plugin.Manifest = null;
-        if (File.Exists(Path.Combine(plugin.Directory, UninstallMarkerFileName)))
+        if (File.Exists(MarkerPath(plugin)))
         {
             plugin.Status = PluginStatus.PendingUninstall;
-            plugin.Detail = "a pasta não pôde ser removida no último start (arquivo em uso?) — tento de novo no próximo";
+            plugin.Detail = (plugin.IsLoose ? "o arquivo" : "a pasta") + " não pôde ser removido no último start (em uso?) — tento de novo no próximo";
+            return;
+        }
+        if (_plugins.Any(p => !ReferenceEquals(p, plugin) && string.Equals(p.Id, plugin.Id, StringComparison.OrdinalIgnoreCase) && p.Status != PluginStatus.Refused))
+        {
+            Refuse(plugin, $"já existe um plugin com o id '{plugin.Id}' ({(plugin.IsLoose ? "uma pasta" : "um .dll solto")} de mesmo nome)");
             return;
         }
 
         // plugin.json when there is one; otherwise the assembly's own metadata says everything it would.
+        // A loose DLL never has a manifest — it is the convention, or a folder.
         PluginManifest manifest;
-        var manifestPath = Path.Combine(plugin.Directory, ManifestFileName);
-        if (File.Exists(manifestPath))
+        var manifestPath = plugin.IsLoose ? null : Path.Combine(plugin.Directory, ManifestFileName);
+        if (manifestPath is not null && File.Exists(manifestPath))
         {
             try
             {
@@ -208,7 +244,9 @@ public sealed class PluginCatalog
                 return;
             }
         }
-        else if (PluginManifestReader.TryRead(plugin.Directory, out var problem) is { } derived)
+        else if ((plugin.IsLoose
+                     ? PluginManifestReader.TryReadAssembly(plugin.LooseAssemblyPath!, plugin.Id, out var problem)
+                     : PluginManifestReader.TryRead(plugin.Directory, out problem)) is { } derived)
         {
             manifest = derived;
         }
@@ -253,7 +291,7 @@ public sealed class PluginCatalog
         var manifest = plugin.Manifest!;
         try
         {
-            var assemblyPath = Path.Combine(plugin.Directory, manifest.AssemblyFile);
+            var assemblyPath = plugin.LooseAssemblyPath ?? Path.Combine(plugin.Directory, manifest.AssemblyFile);
             // Re-enabling reuses the context: the assembly is already there and can't be loaded twice anyway.
             plugin.LoadContext ??= new PluginLoadContext(assemblyPath, manifest.Id);
             var assembly = plugin.LoadContext.LoadFromAssemblyPath(assemblyPath);
@@ -363,8 +401,9 @@ public sealed class PluginCatalog
         if (Find(id) is not { } plugin)
             return;
         // The status line already says "será removido ao reiniciar"; the detail adds what that does and doesn't touch.
-        var detail = $"a pasta plugins\\{plugin.Id} some no próximo start; o que estiver em data\\{plugin.Id} fica";
-        File.WriteAllText(Path.Combine(plugin.Directory, UninstallMarkerFileName), "");
+        var detail = (plugin.IsLoose ? $"o arquivo {Path.GetFileName(plugin.LooseAssemblyPath)}" : $"a pasta plugins\\{plugin.Id}")
+                     + $" some no próximo start; o que estiver em data\\{plugin.Id} fica";
+        File.WriteAllText(MarkerPath(plugin), "");
         if (plugin.Status == PluginStatus.Loaded)
             Unload(plugin, PluginStatus.PendingUninstall, detail);
         else
@@ -381,7 +420,7 @@ public sealed class PluginCatalog
     {
         if (Find(id) is not { Status: PluginStatus.PendingUninstall } plugin)
             return;
-        File.Delete(Path.Combine(plugin.Directory, UninstallMarkerFileName));
+        File.Delete(MarkerPath(plugin));
         SetUserDisabled(plugin.Id, true);
         plugin.Status = PluginStatus.Disabled;
         plugin.Detail = null;

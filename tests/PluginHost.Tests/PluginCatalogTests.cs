@@ -304,6 +304,79 @@ public sealed class PluginCatalogTests : IDisposable
         Assert.Equal(PluginStatus.Loaded, plugin.Status);   // still up: only that feature failed
     }
 
+    // ───── Loose plugins: one .dll straight in plugins/ ─────
+
+    [Fact]
+    public void A_dll_loose_in_the_root_is_a_plugin_named_after_the_file()
+    {
+        var dll = Path.Combine(PluginsDir, "Pixie.Tracklist.dll");
+        Directory.CreateDirectory(PluginsDir);
+        File.Copy(Path.Combine(TracklistOutput, "Pixie.Tracklist.dll"), dll);
+        var catalog = NewCatalog();
+
+        catalog.Initialize();
+
+        var plugin = Assert.Single(catalog.Plugins);
+        Assert.True(plugin.IsLoose);
+        Assert.Equal("Pixie.Tracklist", plugin.Id);
+        Assert.Equal(dll, plugin.Location);
+        Assert.Equal(PluginsDir, plugin.Directory);
+        Assert.Equal(PluginStatus.Loaded, plugin.Status);
+        Assert.Equal("Tracklist", plugin.Manifest!.Name);
+        Assert.Equal("plugin:Pixie.Tracklist", AssemblyLoadContext.GetLoadContext(plugin.Instance!.GetType().Assembly)!.Name);
+    }
+
+    [Fact]
+    public void A_dependency_dll_loose_in_the_root_is_refused_with_the_hint_to_use_a_folder()
+    {
+        Directory.CreateDirectory(PluginsDir);
+        File.Copy(Path.Combine(TracklistOutput, "TagLibSharp.dll"), Path.Combine(PluginsDir, "TagLibSharp.dll"));
+        var catalog = NewCatalog();
+
+        catalog.Initialize();
+
+        var plugin = Assert.Single(catalog.Plugins);
+        Assert.Equal(PluginStatus.Refused, plugin.Status);
+        Assert.Equal("TagLibSharp.dll não referencia o PixieDownloader.Sdk: não é um plugin (se é dependência de um, ele precisa de uma pasta própria)", plugin.Detail);
+    }
+
+    [Fact]
+    public void A_loose_plugin_is_uninstalled_by_a_marker_next_to_it_and_deleted_on_the_next_start()
+    {
+        Directory.CreateDirectory(PluginsDir);
+        foreach (var name in new[] { "Pixie.Tracklist.dll", "Pixie.Tracklist.deps.json" })
+            File.Copy(Path.Combine(TracklistOutput, name), Path.Combine(PluginsDir, name));
+        var settings = new PluginSettings { DisabledIds = { "Pixie.Tracklist" } };   // disabled: nothing maps the file
+        var catalog = NewCatalog(settings);
+        catalog.Initialize();
+        Assert.Equal(PluginStatus.Disabled, catalog.Plugins[0].Status);
+
+        catalog.Uninstall("Pixie.Tracklist");
+        Assert.True(File.Exists(Path.Combine(PluginsDir, "Pixie.Tracklist.dll.uninstall")));
+        Assert.Equal(PluginStatus.PendingUninstall, catalog.Plugins[0].Status);
+
+        var nextStart = NewCatalog(settings);
+        nextStart.Initialize();
+
+        Assert.Empty(nextStart.Plugins);
+        Assert.Empty(Directory.GetFiles(PluginsDir));   // dll, deps.json and the marker are gone
+    }
+
+    [Fact]
+    public void A_folder_and_a_loose_dll_with_the_same_id_cannot_both_load()
+    {
+        Install("tracklist", from: TracklistOutput);                                   // plugins/tracklist/…
+        File.Copy(Path.Combine(TracklistOutput, "Pixie.Tracklist.dll"), Path.Combine(PluginsDir, "tracklist.dll"));   // plugins/tracklist.dll → id "tracklist" too
+        var catalog = NewCatalog();
+
+        catalog.Initialize();
+
+        Assert.Equal(2, catalog.Plugins.Count);
+        Assert.Single(catalog.Plugins, p => p.Status == PluginStatus.Loaded);
+        var refused = Assert.Single(catalog.Plugins, p => p.Status == PluginStatus.Refused);
+        Assert.Contains("já existe um plugin com o id 'tracklist'", refused.Detail);
+    }
+
     // ───── Rescan ─────
 
     [Fact]

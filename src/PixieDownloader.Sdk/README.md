@@ -1,9 +1,12 @@
 # PixieDownloader.Sdk
 
 O contrato de plugin do [PixieDownloader](https://github.com/Sakamoto0110/PixieDownloader).
-Um plugin é uma pasta `plugins/<id>/` ao lado do `PixieDownloader.exe` com o
-assembly dentro; o app carrega cada uma num `AssemblyLoadContext` próprio e
-conversa com o plugin só por estes tipos:
+Um plugin mora em `plugins/` ao lado do `PixieDownloader.exe` — **um `.dll`
+solto** quando ele não precisa de mais nada (`plugins/Pixie.Hello.dll`), ou
+**uma pasta própria** quando traz dependências (`plugins/tracklist/` com o
+`TagLibSharp.dll` dele dentro), pra dependência de um nunca se misturar com
+outro. O app carrega cada um num `AssemblyLoadContext` próprio e conversa com
+o plugin só por estes tipos:
 
 - `IPixiePlugin` — o ponto de entrada: `Configure(IPluginHost)`.
 - `IPluginHost` — o que o host oferece: `Downloads` (`IYtDlpService`, o mesmo
@@ -48,7 +51,7 @@ carregar código) e tira dali tudo que precisa —
 
 | o quê | de onde |
 |---|---|
-| id | o nome da pasta |
+| id | o nome da pasta, ou do arquivo sem `.dll` |
 | assembly | o único `.dll` da pasta que referencia `PixieDownloader.Sdk` |
 | classe de entrada | a única classe que implementa `IPixiePlugin` |
 | nome | `<AssemblyTitle>` do csproj (sem ele, o id) |
@@ -61,7 +64,8 @@ de carregar qualquer código.
 
 Um `plugin.json` na pasta **substitui** tudo isso, e é obrigatório quando a
 convenção não basta: mais de uma classe `IPixiePlugin` no assembly, dependência
-de outro plugin (`dependsOn`), id diferente da pasta.
+de outro plugin (`dependsOn`), id diferente da pasta. (Só em pasta: um `.dll`
+solto vai sempre pela convenção.)
 
 ```json
 {
@@ -111,7 +115,7 @@ public sealed class HelloPlugin : IPixiePlugin, IUiContribution
 - **Desabilitar** é imediato: a aba some, `ShutdownToken` é cancelado, as
   capacidades registradas são removidas. O assembly continua na memória até o
   app fechar — WPF não permite descarregar de verdade.
-- **Desinstalar** apaga a pasta `plugins/<id>/` no próximo start (o arquivo fica
-  em uso até lá). `data/<id>/` fica: é do usuário.
+- **Desinstalar** apaga o `.dll` (ou a pasta) no próximo start — o arquivo fica
+  em uso até lá. `data/<id>/` fica: é do usuário.
 - **Recarregar** (aba Plugins) olha a pasta de novo sem reiniciar: plugin novo
   entra e carrega, um recusado com o problema corrigido também.
