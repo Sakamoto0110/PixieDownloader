@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Module 1 of docs/ROADMAP.md: the tracklist detector (description → pinned comment → other top -->
+  <!-- comments → yt-dlp chapters as fallback), a "Tracklist" tab showing what was found per source, and the -->
+  <!-- ID3 chapters (CHAP/CTOC + the full tree in TXXX:PIXIE_TRACKLIST) written into the MP3 after the -->
+  <!-- download. Installed as plugins/tracklist/ next to the exe; the release ships it as its own zip. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Pixie.Tracklist</RootNamespace>
+    <!-- The plugin's own version — plugin.json says the same; bump both. -->
+    <Version>1.0.0</Version>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Shared with the host, never copied here (PluginLoadContext resolves both from the default context). -->
+    <ProjectReference Include="..\..\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj" Private="false" ExcludeAssets="runtime" />
+    <ProjectReference Include="..\..\YtDlpCore\YtDlpCore.csproj" Private="false" ExcludeAssets="runtime" />
+    <!-- The plugin's own dependency: it lands next to the plugin and is resolved from there. ID3v2 CHAP/CTOC -->
+    <!-- frames are what podcast players and foobar2000/VLC/mpv read as chapters. -->
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+    <None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The tests drive TracklistLine (internal) directly, as they did when it lived in the core. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Pixie.Tracklist.Tests" />
+  </ItemGroup>
+
+  <!-- Dev convenience: mirror the build into the app's output as plugins/tracklist/, so `dotnet run` has it. -->
+  <Target Name="CopyToAppPlugins" AfterTargets="Build">
+    <ItemGroup>
+      <_TracklistOutput Include="$(TargetDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_TracklistOutput)"
+          DestinationFolder="$(MSBuildThisFileDirectory)..\..\PixieDownloader\bin\$(Configuration)\net10.0-windows\plugins\tracklist\%(RecursiveDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

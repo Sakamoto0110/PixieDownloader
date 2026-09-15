@@ -1,0 +1,9 @@
+{
+  "id": "tracklist",
+  "name": "Tracklist",
+  "version": "1.0.0",
+  "apiVersion": "1.1",
+  "assemblyFile": "Pixie.Tracklist.dll",
+  "entryType": "Pixie.Tracklist.TracklistPlugin",
+  "dependsOn": []
+}

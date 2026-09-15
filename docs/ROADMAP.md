@@ -339,7 +339,9 @@ Por isso vem antes da aba, que é só UI.
 2. `TracklistNode` recursivo desde já, profundidade travada em 1
 3. UI de blocos com fontes alternativas e contagem
 4. Gravação de `CHAP`/`CTOC` no download
-5. Módulo 2 com a máquina de estados e o cache em bloco
+5. ~~Módulo 2 com a máquina de estados e o cache em bloco~~ — saiu da 1.6 pela
+   nota de faseamento abaixo: a 1.6 fechou com 1–4 e o módulo 2 ganha versão
+   própria.
 
 O passo 2 é o que faz a 1.7 ser barata. Se `children` nascer plano, a 1.7 vira
 migração de dados em vez de feature.

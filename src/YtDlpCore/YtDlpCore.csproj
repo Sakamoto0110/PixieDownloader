@@ -10,10 +10,9 @@
     <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
-  <!-- The smoke-test harness exercises internal helpers (e.g. BuildSpeedPassArgs) directly; the unit tests, the tracklist line classifier. -->
+  <!-- The smoke-test harness exercises internal helpers (e.g. BuildSpeedPassArgs) directly. -->
   <ItemGroup>
     <InternalsVisibleTo Include="SmokeTest" />
-    <InternalsVisibleTo Include="YtDlpCore.Tests" />
   </ItemGroup>
 
 </Project>

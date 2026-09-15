@@ -1,0 +1,92 @@
+<UserControl x:Class="Pixie.Tracklist.TracklistView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Pixie.Tracklist">
+    <!-- Host styles by DynamicResource (the view is built before it is in the tree); the one converter it
+         needs is WPF's own, kept here so the view stands on its own. -->
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </UserControl.Resources>
+
+    <Border Style="{DynamicResource Card}" Padding="14">
+        <DockPanel>
+            <!-- Header: title + the one decision the user makes per video -->
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                <CheckBox DockPanel.Dock="Right" VerticalAlignment="Center" IsChecked="{Binding WriteToFile, Mode=TwoWay}"
+                          IsEnabled="{Binding HasList}" Content="Gravar no MP3 ao baixar"
+                          ToolTip="Capítulos ID3 (CHAP/CTOC), que VLC, foobar2000 e mpv mostram, mais a lista completa em TXXX:PIXIE_TRACKLIST. Só para MP3 por enquanto."/>
+                <TextBlock Text="Tracklist" Style="{DynamicResource SectionTitle}" VerticalAlignment="Center"/>
+            </DockPanel>
+
+            <!-- Empty state / playlist notice -->
+            <TextBlock DockPanel.Dock="Top" Text="{Binding Message}" Style="{DynamicResource Hint}" TextWrapping="Wrap"
+                       Visibility="{Binding ShowMessage, Converter={StaticResource BoolToVis}}"/>
+
+            <DockPanel Visibility="{Binding HasVideo, Converter={StaticResource BoolToVis}}">
+                <!-- The video -->
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Url}"/>
+                    <TextBlock Text="{Binding Url}" Style="{DynamicResource Hint}" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+
+                <!-- Sources: the block carries the provenance, and the count is the decisive signal -->
+                <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Sources}" Margin="0,0,0,8">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type local:SourceOption}">
+                            <ToggleButton Content="{Binding Label}" ToolTip="{Binding ToolTip}" Style="{DynamicResource GhostToggleButton}"
+                                          IsChecked="{Binding IsSelected, Mode=TwoWay}" Padding="10,5" FontSize="12" Margin="0,0,6,6"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Style="{DynamicResource Hint}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+                <!-- Detection notes (hints the detector saw: "tracklist in the comments", an external link…) -->
+                <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Notes}" Margin="0,0,0,8">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" Style="{DynamicResource Hint}" TextWrapping="Wrap" Foreground="{DynamicResource Brush.Warning}"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- The raw report, for tuning the heuristic against a video that came out wrong -->
+                <Expander DockPanel.Dock="Bottom" Header="Detalhes da detecção" Margin="0,8,0,0" IsExpanded="False">
+                    <TextBox Text="{Binding ReportText, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                             VerticalContentAlignment="Top" FontFamily="{DynamicResource Font.Mono}" FontSize="11"
+                             MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+                </Expander>
+
+                <!-- The tracks -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Entries}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type local:EntryRow}">
+                                <Grid Margin="0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="32"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Number}" Style="{DynamicResource Hint}" FontFamily="{DynamicResource Font.Mono}"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Time}" FontFamily="{DynamicResource Font.Mono}" MinWidth="64" Margin="0,0,10,0"
+                                               Foreground="{DynamicResource Brush.Text.Secondary}"/>
+                                    <TextBlock Grid.Column="2" Text="{Binding Text}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
+                                    <TextBlock Grid.Column="3" Margin="10,0,0,0" Visibility="{Binding HasLink, Converter={StaticResource BoolToVis}}">
+                                        <Hyperlink NavigateUri="{Binding Link}" RequestNavigate="OnLinkRequested" ToolTip="{Binding Link}">link</Hyperlink>
+                                    </TextBlock>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </DockPanel>
+    </Border>
+</UserControl>

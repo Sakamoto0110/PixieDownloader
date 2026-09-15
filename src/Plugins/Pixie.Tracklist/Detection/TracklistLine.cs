@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace YtDlpCore;
+using YtDlpCore;
+
+namespace Pixie.Tracklist.Detection;
 
 /// <summary>What a line of description/comment text looks like, once its marks have been read.</summary>
 internal enum LineKind

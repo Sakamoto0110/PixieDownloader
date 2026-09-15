@@ -9,7 +9,8 @@
     PixieDownloader-vX.Y.Z-win-x64.zip            .exe pequeno, precisa do .NET 10 Desktop Runtime instalado
     PixieDownloader-vX.Y.Z-win-x64-portable.zip   .exe com o .NET dentro, roda em Windows pelado
     PixieDownloader.Sdk.A.B.C.nupkg               o SDK pra escrever plugins (versão própria = apiVersion, não a do app)
-    SHA256SUMS.txt                                hash dos três (formato do sha256sum)
+    PixieDownloader-plugin-tracklist-vA.B.C.zip   o plugin Tracklist (versão própria); extrai em plugins\ ao lado do .exe
+    SHA256SUMS.txt                                hash de todos (formato do sha256sum)
     RELEASE_NOTES.md                              tabela dos assets, usada pelo workflow no corpo da release
 
   Cada .zip abre numa pasta PixieDownloader\ com o .exe, LICENSE e LEIA-ME.txt — e só. yt-dlp e ffmpeg não
@@ -33,6 +34,10 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $repo    = Split-Path -Parent $PSScriptRoot
 $csproj  = Join-Path $repo 'src\PixieDownloader\PixieDownloader.csproj'
 $sdkProj = Join-Path $repo 'src\PixieDownloader.Sdk\PixieDownloader.Sdk.csproj'
+# Os plugins que saem na release, cada um como zip próprio (Hello é só de desenvolvimento e fica de fora).
+$plugins = @(
+    @{ Id = 'tracklist'; Name = 'Tracklist'; Proj = Join-Path $repo 'src\Plugins\Pixie.Tracklist\Pixie.Tracklist.csproj'; Out = Join-Path $repo 'src\Plugins\Pixie.Tracklist\bin\Release\net10.0-windows' }
+)
 $sln     = Join-Path $repo 'PixieDownloader.slnx'
 $license = Join-Path $repo 'LICENSE'
 if (-not $OutDir) { $OutDir = Join-Path $repo 'bin\release' }
@@ -111,6 +116,9 @@ foreach ($f in $flavors) {
         "e depois mantém o yt-dlp atualizado por conta própria (Verificar atualização)."
         ""
         "Em uso, o app cria ao lado do .exe: settings.json, tools\, cache\, logs\, plugins\, data\, .~downloads\ e pending-downloads.txt."
+        ""
+        "Plugins: extraia o zip de um plugin (ex.: PixieDownloader-plugin-tracklist-*.zip, na mesma release) dentro de plugins\"
+        "e reabra o app; a aba Plugins liga, desliga e desinstala cada um."
     ) -join "`r`n")
 
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
@@ -137,11 +145,34 @@ $sums += "$hash  $nupkgName"
 $notes += "| ``$nupkgName`` | SDK pra escrever plugins (``PackageReference``), não é pra usuário final | ``$hash`` |"
 Write-Host ("  {0,-45} {1,6:N1} MB  {2}" -f $nupkgName, ((Get-Item $nupkgPath).Length / 1MB), $hash)
 
+# Os plugins: o build Release do passo 1 já os deixou prontos (e testados). Cada zip abre numa pasta com o
+# id do plugin, pra extrair direto em plugins\ ao lado do .exe. Sem .pdb.
+foreach ($pl in $plugins) {
+    $plVersion = (Select-String -Path $pl.Proj -Pattern '<Version>([^<]+)</Version>').Matches[0].Groups[1].Value.Trim()
+    if (-not $plVersion) { throw "Não achei <Version> em $($pl.Proj)" }
+    if (-not (Test-Path (Join-Path $pl.Out 'plugin.json'))) { throw "O plugin $($pl.Id) não foi buildado em $($pl.Out)" }
+    $zipName = "PixieDownloader-plugin-$($pl.Id)-v$plVersion.zip"
+    $zipPath = Join-Path $OutDir $zipName
+    $stage   = Join-Path $OutDir "stage-plugin-$($pl.Id)"
+    $pkg     = Join-Path $stage $pl.Id
+    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+    New-Item -ItemType Directory -Force $pkg | Out-Null
+    Get-ChildItem $pl.Out -File | Where-Object { $_.Extension -ne '.pdb' } | Copy-Item -Destination $pkg
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+    Remove-Item $stage -Recurse -Force
+
+    $hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sums += "$hash  $zipName"
+    $notes += "| ``$zipName`` | Plugin **$($pl.Name)** $plVersion — extraia dentro de ``plugins\`` ao lado do .exe e reabra o app | ``$hash`` |"
+    Write-Host ("  {0,-45} {1,6:N1} MB  {2}" -f $zipName, ((Get-Item $zipPath).Length / 1MB), $hash)
+}
+
 # ───── 4. SHA256SUMS + notas (bloco da versão no CHANGELOG.md, se houver, seguido da tabela de assets) ─────
 Step '4/4 SHA256SUMS.txt + RELEASE_NOTES.md'
 Write-Utf8 (Join-Path $OutDir 'SHA256SUMS.txt') (($sums -join "`n") + "`n")
 $notes += ""
-$notes += "Os dois .zip trazem só o app: na primeira abertura ele baixa o yt-dlp e o ffmpeg sozinho (precisa de internet). O .nupkg é o SDK de plugins (versão própria, o apiVersion). Confira os hashes com ``SHA256SUMS.txt``."
+$notes += "Os dois .zip do app trazem só o app: na primeira abertura ele baixa o yt-dlp e o ffmpeg sozinho (precisa de internet). Plugin é opcional: extraia o zip dele em ``plugins\`` ao lado do .exe. O .nupkg é o SDK pra escrever plugins (versão própria, o apiVersion). Confira os hashes com ``SHA256SUMS.txt``."
 
 $changelog = @()
 $changelogPath = Join-Path $repo 'CHANGELOG.md'
