@@ -1,14 +1,12 @@
-# Publica o SDK de plugins (PixieDownloader.Sdk.<apiVersion>.nupkg) no nuget.org.
-# Roda sozinho quando uma release é publicada — o .nupkg vem dos assets dela, o mesmo arquivo que o
-# scripts/release.ps1 gerou — e também à mão (Actions → "Publish SDK to nuget.org" → Run workflow, com o tag).
-# Precisa do secret NUGET_API_KEY (nuget.org → API Keys → escopo "Push", glob PixieDownloader.*); sem ele
-# só avisa e sai, sem falhar a release. --skip-duplicate: a mesma versão do Sdk sai em várias releases do
-# app, e a segunda vez é no-op (o nuget.org não aceita republicar uma versão).
+# Publica à mão o SDK de plugins (PixieDownloader.Sdk.<apiVersion>.nupkg) de uma release já existente no
+# nuget.org — Actions → "Publish SDK to nuget.org" → Run workflow, com o tag; ou `gh workflow run nuget.yml
+# -f tag=vX.Y.Z`. É o caminho pra publicar o que já saiu antes do secret NUGET_API_KEY existir; nas
+# releases seguintes o próprio release.yml faz o push. (Um gatilho `release: published` não serviria: a
+# release é criada com o GITHUB_TOKEN, e isso não dispara outros workflows.) O .nupkg vem dos assets da
+# release, o mesmo arquivo que o scripts/release.ps1 gerou; --skip-duplicate torna repetir um no-op.
 name: Publish SDK to nuget.org
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -23,11 +21,11 @@ jobs:
     runs-on: ubuntu-24.04   # empurrar um .nupkg não precisa de nada do Windows
     env:
       NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-      TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+      TAG: ${{ github.event.inputs.tag }}
     steps:
       - name: Sem NUGET_API_KEY, nada a fazer
         if: env.NUGET_API_KEY == ''
-        run: echo "::warning::secret NUGET_API_KEY não configurado — o SDK não foi publicado no nuget.org"
+        run: echo "::error::secret NUGET_API_KEY não configurado — crie a API key no nuget.org e guarde como secret do repositório"; exit 1
 
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         if: env.NUGET_API_KEY != ''
@@ -38,15 +36,9 @@ jobs:
         if: env.NUGET_API_KEY != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        # A release recém-publicada pode ainda estar recebendo os assets: tenta por até dois minutos.
         run: |
-          for i in 1 2 3 4 5 6; do
-            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'PixieDownloader.Sdk.*.nupkg' --dir pkg; then
-              ls -la pkg; exit 0
-            fi
-            echo "asset ainda não disponível, tentando de novo em 20 s ($i/6)"; sleep 20
-          done
-          echo "::error::nenhum PixieDownloader.Sdk.*.nupkg na release $TAG"; exit 1
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'PixieDownloader.Sdk.*.nupkg' --dir pkg
+          ls -la pkg
 
       - name: dotnet nuget push
         if: env.NUGET_API_KEY != ''

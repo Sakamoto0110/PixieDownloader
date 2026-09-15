@@ -1,5 +1,8 @@
-# Release do PixieDownloader: `git tag v1.4.0 && git push origin v1.4.0` cria a GitHub Release com os dois .zip
-# e o .nupkg do SDK de plugins.
+# Release do PixieDownloader: `git tag v1.4.0 && git push origin v1.4.0` cria a GitHub Release com os dois .zip,
+# o zip de cada plugin e o .nupkg do SDK — e, se o secret NUGET_API_KEY existir, publica o SDK no nuget.org
+# (a mesma versão do Sdk sai em várias releases do app; --skip-duplicate faz a segunda vez ser no-op).
+# O push fica aqui dentro, e não num workflow disparado por `release: published`, porque uma release criada
+# com o GITHUB_TOKEN não dispara outros workflows (regra do GitHub contra recursão).
 # O trabalho todo está em scripts/release.ps1 (o mesmo que roda localmente); aqui só tem o runner, o SDK,
 # e o `gh release create`. O tag precisa bater com o <Version> do .csproj — o script recusa se não bater.
 # Dependências fixadas de propósito (sem "latest"): runner, actions por SHA, SDK exato, tools dentro do script.
@@ -35,4 +38,14 @@ jobs:
           $tag = '${{ github.ref_name }}'
           $assets = @(Get-ChildItem bin/release/*.zip, bin/release/*.nupkg | ForEach-Object FullName) + @('bin/release/SHA256SUMS.txt')
           gh release create $tag --verify-tag --title "PixieDownloader $($tag.TrimStart('v'))" --notes-file bin/release/RELEASE_NOTES.md --generate-notes @assets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish SDK to nuget.org
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if (-not $env:NUGET_API_KEY) { Write-Host "::warning::secret NUGET_API_KEY não configurado — o SDK não foi publicado no nuget.org"; exit 0 }
+          $nupkg = (Get-Item bin/release/PixieDownloader.Sdk.*.nupkg).FullName
+          dotnet nuget push $nupkg --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
