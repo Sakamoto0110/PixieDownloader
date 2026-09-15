@@ -10,10 +10,13 @@ using PixieDownloader.Sdk;
 namespace PixieDownloader.Plugins;
 
 /// <summary>
-/// The official plugins, as the latest GitHub Release describes them. <c>plugins.json</c> is an asset the
-/// release script writes next to the plugin zips — id, name, version, apiVersion, description, asset name,
-/// sha256 — and the app reads it from <c>releases/latest/download/</c>: no GitHub API, no rate limit, and the
-/// release that holds the zips is the one describing them, so the two can't drift. Installing one downloads
+/// The official plugins, as the catalog describes them. <c>plugins.json</c> is an asset of the repository's
+/// fixed <c>plugins</c> GitHub Release (a pre-release, so it never becomes the app's "latest"), written by
+/// <c>scripts/release-plugin.ps1</c> next to the plugin zips — id, name, version, apiVersion, description,
+/// asset name, sha256 — every time a plugin tag (<c>&lt;id&gt;-vX.Y.Z</c>) is released. The app reads it from
+/// <c>releases/download/plugins/</c>: no GitHub API, no rate limit, and the release that holds the zips is the
+/// one describing them, so the two can't drift; plugins ship on their own, the app only when the app changes.
+/// Installing one downloads
 /// the zip into a staging dot-folder under <c>plugins/</c> (never listed as a plugin), checks the hash, unpacks,
 /// reads the manifest off the DLL's metadata the way the catalog would and refuses an incompatible apiVersion
 /// — all before anything reaches <c>plugins/&lt;id&gt;/</c>, which is <see cref="PluginCatalog.Install"/>'s step.
@@ -21,7 +24,7 @@ namespace PixieDownloader.Plugins;
 /// </summary>
 public sealed class PluginStore : IDisposable
 {
-    public const string DefaultCatalogUrl = AppInfo.RepositoryUrl + "/releases/latest/download/plugins.json";
+    public const string DefaultCatalogUrl = AppInfo.RepositoryUrl + "/releases/download/plugins/plugins.json";
 
     /// <summary><c>plugins/.~store-&lt;guid&gt;/</c>: one per download, gone when the install is over (or at the next start, after a crash).</summary>
     public const string StagingPrefix = ".~store-";
@@ -64,7 +67,7 @@ public sealed class PluginStore : IDisposable
     {
         using var response = await _http.GetAsync(CatalogUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
-            throw new PluginStoreException("a última release não tem catálogo de plugins (plugins.json)");
+            throw new PluginStoreException("não tem catálogo de plugins (plugins.json) nesse endereço");
         response.EnsureSuccessStatusCode();
 
         StoreCatalog? catalog;
@@ -148,7 +151,7 @@ public sealed class PluginStore : IDisposable
     {
         using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
-            throw new PluginStoreException($"a release não tem o arquivo {Path.GetFileName(url.LocalPath)}");
+            throw new PluginStoreException($"o catálogo não tem o arquivo {Path.GetFileName(url.LocalPath)}");
         response.EnsureSuccessStatusCode();
         var total = response.Content.Headers.ContentLength;
 
@@ -192,8 +195,12 @@ public sealed class PluginStore : IDisposable
     public void Dispose() => _http.Dispose();
 }
 
-/// <summary>What the catalog says about the plugins of a release. Shape: see <c>scripts/release.ps1</c>, which writes it.</summary>
-public sealed record StoreCatalog(int SchemaVersion, string? App, IReadOnlyList<StorePlugin> Plugins)
+/// <summary>
+/// What the catalog says about the official plugins. Shape: see <c>scripts/release-plugin.ps1</c>, which writes it.
+/// <paramref name="App"/> is what catalogs written by the app release carried until 1.7.0 (a private catalog may
+/// still say it); <paramref name="UpdatedAt"/> is when the current catalog was last rewritten, ISO 8601.
+/// </summary>
+public sealed record StoreCatalog(int SchemaVersion, string? App, IReadOnlyList<StorePlugin> Plugins, string? UpdatedAt = null)
 {
     public IReadOnlyList<StorePlugin> Plugins { get; init; } = Plugins ?? [];
 }

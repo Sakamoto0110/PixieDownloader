@@ -1,4 +1,4 @@
-# PixieDownloader — arquitetura de plugins e roadmap 1.5 → 1.10
+# PixieDownloader — arquitetura de plugins e roadmap (1.5 → 1.7 no app; daí em diante, módulos como releases de plugin)
 
 ![Arquitetura de plugins](pixie-arch.png)
 
@@ -90,11 +90,16 @@ GitHub Release ao lado dos zips; consumir de lá é `dotnet nuget add source`.
 Publicar no nuget.org é uma linha a mais quando aparecer autor de fora — o id
 é permanente, então `PixieDownloader.Sdk` fica fixado desde já.
 
-**Os plugins oficiais chegam pela própria release (1.7).** O `release.ps1`
-escreve um `plugins.json` ao lado dos zips — id, nome, versão, apiVersion,
-descrição, nome do zip, sha256 — e o app lê `releases/latest/download/plugins.json`:
-sem API do GitHub, sem rate limit, e o release que tem os zips é o que os
-descreve, então lista e arquivos não desencontram. A aba Plugins mostra cada
+**Os plugins oficiais têm release própria, separada da do app (1.7.1; na 1.7
+saíam junto com o app).** A tag `<id>-vX.Y.Z` dispara `release-plugin.yml`,
+que roda `scripts/release-plugin.ps1`: builda e testa só aquele plugin, zipa,
+e mescla a entrada dele — id, nome, versão, apiVersion, descrição, nome do
+zip, sha256 — no `plugins.json` da release fixa **`plugins`** do GitHub
+(pré-release, então nunca vira a "latest" do app), subindo zip e catálogo lá.
+O app lê `releases/download/plugins/plugins.json`: sem API do GitHub, sem
+rate limit, e a release que tem os zips é a que os descreve, então lista e
+arquivos não desencontram. O app só tem release quando o app muda; a versão
+dele não sobe por causa de plugin. A aba Plugins mostra cada
 entrada com Instalar/Atualizar; o download confere o hash, abre num staging
 oculto dentro de `plugins/`, lê o manifesto do `.dll` e recusa apiVersion
 incompatível antes de encostar em `plugins/<id>/`. Plugin carregado tem o
@@ -235,7 +240,8 @@ interoperável para todo mundo, completo para o Pixie.
 
 ## Módulo 2 — Music local browser
 
-O plugin `Pixie.Library` (id `library`, aba "Biblioteca"), saiu na 1.8.
+O plugin `Pixie.Library` (id `library`, aba "Biblioteca"), release própria
+`library-v1.0.0` (2026-09-15).
 Catálogo do que já existe em disco. Pastas nomeadas apontando para pastas
 reais (uma pasta virtual = um nome + uma pasta real; árvore virtual fica
 para depois — o manifesto aceita um `parent` sem quebrar). Sem player
@@ -347,7 +353,7 @@ Cancelar (plugin desabilitado, app fechando) deixa `failed`.*
 
 ---
 
-## Módulo 3 — Discovery (1.10)
+## Módulo 3 — Discovery (plugin próprio, depois do aninhamento)
 
 Busca online: YouTube, SoundCloud, Spotify (só para sinalizar que existe),
 fontes obscuras. Direção oposta ao módulo 2 — não lê dele.
@@ -421,22 +427,30 @@ migração de dados em vez de feature.
 Entrou na frente do aninhamento porque distribuição é o que faz o modelo de
 plugin valer: sem ela, "vira plugin" é só uma pasta a mais pra copiar à mão.
 
-### 1.8 — biblioteca local
+### 1.7.1 — release de plugin separada da do app
 
-Módulo 2 como plugin (`Pixie.Library`), com a máquina de estados, o índice
-incremental e o cache em bloco descritos acima. Entrou antes do aninhamento
-porque fecha sozinho: não depende de fonte externa e o que o app baixa passa
-a ter onde aparecer.
+A loja passa a ler o catálogo da release fixa `plugins`, e cada plugin sai
+pela própria tag (`<id>-vX.Y.Z`). Motivo: o app não mudou nada entre a loja e
+o módulo 2, e um plugin novo não é motivo pra versão nova do app. Daqui em
+diante o app só bumpa quando o host muda (Sdk novo, correção, UI); os módulos
+abaixo são releases de plugin.
 
-### 1.9 — aninhamento
+### Library 1.0 — biblioteca local (módulo 2)
+
+`Pixie.Library`, com a máquina de estados, o índice incremental e o cache em
+bloco descritos acima. Entrou antes do aninhamento porque fecha sozinho: não
+depende de fonte externa e o que o app baixa passa a ter onde aparecer.
+
+### TrackTracer 1.1 — aninhamento
 
 1. Destrava a profundidade
 2. Expansão lazy com detecção de ciclo
 3. `failed` com motivo e retry seletivo
 
-O formato não muda — é só UI e loader de camada.
+O formato não muda — é só UI e loader de camada. Sem mudança no app, a não
+ser que o plugin precise de algo novo do host (aí é Sdk 1.2 e um app novo).
 
-### 1.10 — Discovery
+### Discovery 1.0 — módulo 3
 
 Módulo 3, com uma ou duas fontes fechadas em escopo, não "fontes obscuras" em
 geral. Cada fonte como sub-plugin desde o primeiro dia.
@@ -487,3 +501,8 @@ O teste: alguém lendo o changelog aprende a fazer algo novo? Então `y`.
 Exemplos: expandir camadas recursivas é `y` (capacidade nova, mesmo extractor);
 casar mais formatos de timestamp com os mesmos padrões é `z`; sync incremental
 em vez de completo é `z`; botão de sync manual é `y`.
+
+Os mesmos critérios valem para a versão de cada plugin (o `<Version>` do
+csproj dele, que é a da tag `<id>-vX.Y.Z`) — e desde a 1.7.1 é **só** ela que
+sobe quando um plugin muda. A versão do app não conta plugin: um plugin novo,
+ou uma versão nova de plugin, é release na `plugins`, não release do app.

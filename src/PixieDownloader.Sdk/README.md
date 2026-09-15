@@ -130,12 +130,14 @@ public sealed class HelloPlugin : IPixiePlugin, IUiContribution
 - **Recarregar** (aba Plugins) olha a pasta de novo sem reiniciar: plugin novo
   entra e carrega, um recusado com o problema corrigido também.
 - **Instalar pela aba** ("Plugins oficiais"): a aba lê o `plugins.json` da
-  última release do app (ou da URL em `Settings.Plugins.CatalogUrl`) e instala
-  o zip conferindo o SHA256 — o zip abre numa pasta com o id do plugin. Se a
-  versão atual estiver carregada, a nova espera em `plugins/.~update-<id>/` e
-  entra no próximo start. Um `plugins.json` seu tem a mesma forma que o da
-  release: `{ "schemaVersion": 1, "plugins": [ { "id", "name", "version",
-  "apiVersion", "description", "asset", "sha256" } ] }`, com os zips ao lado.
+  release `plugins` do repositório (ou da URL em `Settings.Plugins.CatalogUrl`)
+  e instala o zip conferindo o SHA256 — o zip abre numa pasta com o id do
+  plugin. Cada plugin oficial tem release própria (tag `<id>-vX.Y.Z`), separada
+  da do app. Se a versão atual estiver carregada, a nova espera em
+  `plugins/.~update-<id>/` e entra no próximo start. Um `plugins.json` seu tem
+  a mesma forma: `{ "schemaVersion": 1, "plugins": [ { "id", "name",
+  "version", "apiVersion", "description", "asset", "sha256" } ] }`, com os zips
+  ao lado.
 - **`Configure` que lança** deixa o plugin como "Falhou ao carregar" com a
   mensagem, e o host desfaz o que ele tinha feito (capacidades, pedido de
   comentários, token cancelado) — Habilitar tenta de novo do zero. Um callback

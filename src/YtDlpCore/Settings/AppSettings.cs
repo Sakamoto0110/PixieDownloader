@@ -31,7 +31,7 @@ public sealed class PluginSettings : ObservableObject
     private string? _catalogUrl;
     /// <summary>
     /// Where the Plugins tab fetches the catalog of official plugins (<c>plugins.json</c>, the zips resolved
-    /// relative to it). Null or blank = the app's latest GitHub Release. A private catalog works the same way.
+    /// relative to it). Null or blank = the repository's `plugins` GitHub Release. A private catalog works the same way.
     /// </summary>
     public string? CatalogUrl { get => _catalogUrl; set => SetProperty(ref _catalogUrl, value); }
 }

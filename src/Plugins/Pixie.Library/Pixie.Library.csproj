@@ -4,7 +4,7 @@
   <!-- at real ones, an index of every audio/video file under them (tags read once, re-read only where the file -->
   <!-- changed), a "Biblioteca" tab with search and sort, and "open in the player you chose" instead of a player -->
   <!-- of its own. What the app downloads joins the catalogue by itself. Installed as plugins/library/ next to -->
-  <!-- the exe; the release ships it as its own zip. -->
+  <!-- the exe; released on its own (tag library-vX.Y.Z -> the repository's `plugins` release). -->
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
@@ -13,7 +13,7 @@
     <RootNamespace>Pixie.Library</RootNamespace>
     <!-- No plugin.json: the host reads id (folder), name, version, apiVersion and the entry class from the -->
     <!-- assembly's metadata. So this is the plugin's version, AssemblyTitle is what the Plugins tab shows, and -->
-    <!-- Description is what the store ("Plugins oficiais") shows — release.ps1 copies it into plugins.json. -->
+    <!-- Description is what the store ("Plugins oficiais") shows — release-plugin.ps1 copies it into plugins.json. -->
     <Version>1.0.0</Version>
     <AssemblyTitle>Library</AssemblyTitle>
     <Description>Catálogo do que já está em disco: pastas nomeadas, busca por título/artista/arquivo, e abre no player que você escolher. O que o app baixa entra sozinho.</Description>

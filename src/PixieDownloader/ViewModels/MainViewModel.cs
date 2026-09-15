@@ -992,8 +992,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     // ───────────────────────── Plugin store ─────────────────────────
-    // "Plugins oficiais": the plugins the latest GitHub Release ships, from the plugins.json the release
-    // script writes next to their zips (PluginStore). Fetched the first time the Plugins tab shows (the view
+    // "Plugins oficiais": the plugins the repository's `plugins` release holds, from the plugins.json the
+    // plugin release script writes next to their zips (PluginStore). Fetched the first time the Plugins tab shows (the view
     // calls EnsureStoreLoaded), again on "Buscar de novo". Each row is a catalog entry plus what the local
     // catalog says about it — recomputed on every PluginCatalog.Changed, so an install flips its own row.
     // Install = download + verify + unpack (the store) and then PluginCatalog.Install, which either loads it
@@ -1010,7 +1010,7 @@ public sealed class MainViewModel : ObservableObject
 
     public bool StoreBusy { get => _storeBusy; private set => SetProperty(ref _storeBusy, value); }
 
-    /// <summary>Where the catalog comes from, for the tooltip — the GitHub release unless settings say otherwise.</summary>
+    /// <summary>Where the catalog comes from, for the tooltip — the `plugins` GitHub release unless settings say otherwise.</summary>
     public string StoreCatalogUrl => _store.CatalogUrl.ToString();
 
     /// <summary>The view calls this when the Plugins tab shows: fetch once, and again after a failure, never while fetching.</summary>
@@ -1032,10 +1032,12 @@ public sealed class MainViewModel : ObservableObject
                 StoreItems.Add(new StorePluginViewModel(entry));
             RefreshStoreStates();
             _storeLoaded = true;
-            var release = string.IsNullOrWhiteSpace(catalog.App) ? "" : $" (release {catalog.App})";
+            var when = DateTimeOffset.TryParse(catalog.UpdatedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var updated)
+                ? $" (catálogo de {updated.ToLocalTime():dd/MM/yyyy HH:mm})"
+                : string.IsNullOrWhiteSpace(catalog.App) ? "" : $" (release {catalog.App})";
             StoreStatus = StoreItems.Count == 0
-                ? $"A última release não traz plugins{release}."
-                : $"{StoreItems.Count} plugin(s) na última release{release}.";
+                ? $"O catálogo não traz plugins{when}."
+                : $"{StoreItems.Count} plugin(s) no catálogo{when}.";
         }
         catch (PluginStoreException ex)
         {

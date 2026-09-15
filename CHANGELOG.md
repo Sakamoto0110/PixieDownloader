@@ -3,11 +3,18 @@
 Versões seguem o `<Version>` do `.csproj` e as tags `vX.Y.Z`; só o que foi publicado entra aqui.
 O bloco da versão é copiado para o corpo da GitHub Release pelo `scripts/release.ps1`.
 
-## [1.8.0] — 2026-09-15
+## Plugins
 
-### Adicionado
-- **Plugin Library** (`PixieDownloader-plugin-library-v1.0.0.zip`, pasta `plugins\library\` — instale pela aba Plugins): a aba **Biblioteca** cataloga o que já está em disco. Pastas nomeadas apontam pra pastas reais (Adicionar pasta, renomear, remover — nenhum arquivo é tocado) e tudo abaixo delas entra num índice com título, artista, álbum, duração, bitrate e o número de capítulos ID3 — um mix com a tracklist gravada mostra "24 faixas". Busca sem acento por título/artista/álbum/arquivo/pasta, filtro por tipo (áudio, vídeo, outros), ordem (recentes, título, artista, duração, tamanho, pasta), rodapé com contagem, duração e tamanho do que está na tela. Duplo clique ou **Abrir** abre no programa que você escolher em Opções (VLC é a recomendação) ou no padrão do Windows; **Pasta** mostra o arquivo no Explorer. Só áudio e vídeo entram por padrão; "Outras extensões" em Opções acrescenta o que quiser (gif, por exemplo) e a extensão aparece em cada linha.
-- **O que o app baixa entra na Biblioteca sozinho**: ao terminar um download, a pasta de saída vira uma pasta do catálogo se nenhuma a contém (dá pra desligar em Opções) e o arquivo aparece na hora. Abrir a aba confere as pastas e sincroniza só o que mudou — as tags são lidas uma vez e relidas só quando o arquivo muda; **Sincronizar** faz a varredura completa. Disco desligado não apaga nada: a pasta fica marcada como não encontrada e o que já estava no catálogo continua listado. Tudo em `data\library\` (`manifest.json` legível, `index.json`).
+Os plugins oficiais têm versão e release próprias, separadas das do app: a tag `<id>-vX.Y.Z` publica o zip e atualiza o catálogo na release [`plugins`](https://github.com/Sakamoto0110/PixieDownloader/releases/tag/plugins) do GitHub, de onde a aba Plugins instala. O histórico deles fica aqui, fora das versões do app.
+
+- **Library 1.0.0** — 2026-09-15 — módulo 2 do roadmap: a aba **Biblioteca** cataloga o que já está em disco. Pastas nomeadas apontam pra pastas reais (Adicionar pasta, renomear, remover — nenhum arquivo é tocado) e tudo abaixo delas entra num índice com título, artista, álbum, duração, bitrate e o número de capítulos ID3 — um mix com a tracklist gravada mostra "24 faixas". Busca sem acento por título/artista/álbum/arquivo/pasta, filtro por tipo (áudio, vídeo, outros), ordem (recentes, título, artista, duração, tamanho, pasta), rodapé com contagem, duração e tamanho do que está na tela. Duplo clique ou **Abrir** abre no programa que você escolher em Opções (VLC é a recomendação) ou no padrão do Windows; **Pasta** mostra o arquivo no Explorer. Só áudio e vídeo entram por padrão; "Outras extensões" em Opções acrescenta o que quiser (gif, por exemplo) e a extensão aparece em cada linha. **O que o app baixa entra sozinho**: ao terminar um download, a pasta de saída vira uma pasta do catálogo se nenhuma a contém (dá pra desligar em Opções) e o arquivo aparece na hora. Abrir a aba confere as pastas e sincroniza só o que mudou — as tags são lidas uma vez e relidas só quando o arquivo muda; **Sincronizar** faz a varredura completa. Disco desligado não apaga nada: a pasta fica marcada como não encontrada e o que já estava no catálogo continua listado. Tudo em `data\library\` (`manifest.json` legível, `index.json`).
+- **TrackTracer 1.0.0** — 2026-09-15 — a primeira release própria; o mesmo plugin que saiu junto com o app 1.7.0.
+
+## [1.7.1] — 2026-09-15
+
+### Alterado
+- **Plugins têm release própria.** A aba Plugins passa a ler o catálogo da release `plugins` do GitHub (`releases/download/plugins/plugins.json`), que cada tag `<id>-vX.Y.Z` atualiza; a release do app deixa de levar zip de plugin e `plugins.json`. Um plugin novo ou atualizado não muda mais a versão do app. (O 1.7.0 lia o catálogo da última release do app e, a partir desta, não acha mais nada lá — atualize.)
+- A linha de status da loja diz de quando é o catálogo em vez de qual release do app o trouxe.
 
 ## [1.7.0] — 2026-09-15
 

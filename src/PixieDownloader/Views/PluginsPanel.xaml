@@ -96,7 +96,7 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <!-- ───── Plugins oficiais: what the latest release ships, installable from here ───── -->
+                    <!-- ───── Plugins oficiais: what the `plugins` release holds, installable from here ───── -->
                     <DockPanel Margin="0,18,0,4">
                         <Button DockPanel.Dock="Right" Content="Buscar de novo" Style="{StaticResource GhostButton}" Padding="10,5"
                                 Command="{Binding RefreshStoreCommand}"
@@ -137,7 +137,7 @@
 
                                         <Button Grid.Column="1" Content="{Binding ActionText}" Padding="12,4" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
                                                 Visibility="{Binding HasAction, Converter={StaticResource BoolToVis}}"
-                                                ToolTip="Baixa o zip da release, confere o SHA256 e instala em plugins\ — se a versão atual estiver em uso, a nova entra no próximo start"
+                                                ToolTip="Baixa o zip do catálogo, confere o SHA256 e instala em plugins\ — se a versão atual estiver em uso, a nova entra no próximo start"
                                                 Command="{Binding DataContext.InstallStorePluginCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                                 CommandParameter="{Binding}"/>
                                     </Grid>

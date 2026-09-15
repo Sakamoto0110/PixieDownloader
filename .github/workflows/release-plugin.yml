@@ -1,0 +1,72 @@
+# Release de UM plugin oficial: `git tag library-v1.0.0 && git push origin library-v1.0.0` builda e testa só
+# aquele plugin (scripts/release-plugin.ps1, o mesmo que se roda à mão), zipa, e sobe zip + plugins.json na
+# release fixa `plugins` do GitHub — pré-release, então nunca vira a "latest" do app — de onde a aba Plugins
+# do app lê o catálogo. O plugins.json atual é baixado primeiro e a entrada deste plugin é trocada nele, então
+# os outros plugins continuam lá; os zips de versões anteriores também (só o mesmo nome é sobrescrito).
+# Releases de plugin nunca correm em paralelo (concurrency): duas tags de uma vez fariam a segunda mesclar um
+# catálogo velho. A release do app é outro workflow (release.yml, tag vX.Y.Z) e não leva plugin nenhum.
+# Dependências fixadas de propósito (sem "latest"): runner, actions por SHA, SDK exato.
+name: Release plugin
+
+on:
+  push:
+    tags:
+      - '*-v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write   # gh release create/upload/edit
+
+concurrency:
+  group: plugins-release
+  cancel-in-progress: false
+
+jobs:
+  plugin:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.400'
+
+      - name: Tag → id + versão
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag -notmatch '^([a-z0-9][a-z0-9._-]*)-v(\d+\.\d+\.\d+)$') { throw "Tag de plugin inesperada: $tag (esperado <id>-vX.Y.Z)" }
+          "PLUGIN_ID=$($Matches[1])" >> $env:GITHUB_ENV
+          "PLUGIN_VERSION=$($Matches[2])" >> $env:GITHUB_ENV
+
+      - name: Catálogo atual (a release `plugins`, criada se ainda não existir)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false   # gh falhando aqui é caso esperado, tratado no $LASTEXITCODE
+          New-Item -ItemType Directory -Force bin/release | Out-Null
+          gh release view plugins *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host 'release `plugins` não existe: criando'
+            gh release create plugins --prerelease --title 'Plugins' --notes 'Catálogo dos plugins oficiais — a aba Plugins do app lê o plugins.json daqui.'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          gh release download plugins --pattern plugins.json --dir bin/release --clobber
+          if ($LASTEXITCODE -ne 0) { Write-Host 'sem plugins.json ainda: o catálogo nasce agora' }
+
+      - name: Build, test, zip, catálogo
+        shell: pwsh
+        run: |
+          $catalog = if (Test-Path bin/release/plugins.json) { 'bin/release/plugins.json' } else { '' }
+          ./scripts/release-plugin.ps1 -Id $env:PLUGIN_ID -Version $env:PLUGIN_VERSION -Catalog $catalog
+
+      - name: Subir na release `plugins`
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = "bin/release/PixieDownloader-plugin-$env:PLUGIN_ID-v$env:PLUGIN_VERSION.zip"
+          gh release upload plugins $zip bin/release/plugins.json --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit plugins --notes-file bin/release/PLUGINS_NOTES.md
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

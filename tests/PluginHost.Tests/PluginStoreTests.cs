@@ -70,6 +70,25 @@ public sealed class PluginStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_catalog_from_the_plugins_release_has_updatedAt_and_no_app_and_is_accepted()
+    {
+        // What release-plugin.ps1 writes since 1.7.1: no "app" (plugins ship on their own), an "updatedAt".
+        Directory.CreateDirectory(ReleaseDir);
+        File.WriteAllText(Path.Combine(ReleaseDir, "plugins.json"), """
+            { "schemaVersion": 1, "updatedAt": "2026-09-15T22:12:03Z", "plugins": [
+              { "id": "library", "name": "Library", "version": "1.0.0", "apiVersion": "1.1", "description": "d", "asset": "PixieDownloader-plugin-library-v1.0.0.zip",
+                "sha256": "05bd8bdbb4fe1b0069a4292a9f50be9b3fa87ed36907f803085cf495b5b2c15d", "size": 248434 } ] }
+            """);
+        using var store = NewStore();
+
+        var catalog = await store.FetchCatalogAsync(CancellationToken.None);
+
+        Assert.Null(catalog.App);
+        Assert.Equal("2026-09-15T22:12:03Z", catalog.UpdatedAt);
+        Assert.Equal("library", Assert.Single(catalog.Plugins).Id);
+    }
+
+    [Fact]
     public async Task A_release_without_a_catalog_says_so_instead_of_failing_on_a_404()
     {
         Directory.CreateDirectory(ReleaseDir);   // nothing in it
