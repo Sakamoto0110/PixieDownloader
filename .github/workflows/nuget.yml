@@ -1,7 +1,8 @@
 # Publica à mão o SDK de plugins (PixieDownloader.Sdk.<apiVersion>.nupkg) de uma release já existente no
 # nuget.org — Actions → "Publish SDK to nuget.org" → Run workflow, com o tag; ou `gh workflow run nuget.yml
-# -f tag=vX.Y.Z`. É o caminho pra publicar o que já saiu antes do secret NUGET_API_KEY existir; nas
-# releases seguintes o próprio release.yml faz o push. (Um gatilho `release: published` não serviria: a
+# -f tag=vX.Y.Z`. É o caminho pra publicar o que já saiu antes de existir o fluxo; nas releases seguintes o
+# próprio release.yml faz o push. Trusted Publishing (OIDC): precisa de uma trust policy no nuget.org para
+# ESTE arquivo (Sakamoto0110/PixieDownloader, nuget.yml). (Um gatilho `release: published` não serviria: a
 # release é criada com o GITHUB_TOKEN, e isso não dispara outros workflows.) O .nupkg vem dos assets da
 # release, o mesmo arquivo que o scripts/release.ps1 gerou; --skip-duplicate torna repetir um no-op.
 name: Publish SDK to nuget.org
@@ -15,31 +16,30 @@ on:
 
 permissions:
   contents: read
+  id-token: write   # NuGet/login (Trusted Publishing)
 
 jobs:
   push:
     runs-on: ubuntu-24.04   # empurrar um .nupkg não precisa de nada do Windows
     env:
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
       TAG: ${{ github.event.inputs.tag }}
     steps:
-      - name: Sem NUGET_API_KEY, nada a fazer
-        if: env.NUGET_API_KEY == ''
-        run: echo "::error::secret NUGET_API_KEY não configurado — crie a API key no nuget.org e guarde como secret do repositório"; exit 1
-
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        if: env.NUGET_API_KEY != ''
         with:
           dotnet-version: '10.0.400'
 
       - name: Baixar o .nupkg da release
-        if: env.NUGET_API_KEY != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'PixieDownloader.Sdk.*.nupkg' --dir pkg
           ls -la pkg
 
+      - name: Log in to nuget.org (Trusted Publishing)
+        id: nuget
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: Nekovih
+
       - name: dotnet nuget push
-        if: env.NUGET_API_KEY != ''
-        run: dotnet nuget push pkg/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push pkg/*.nupkg --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate

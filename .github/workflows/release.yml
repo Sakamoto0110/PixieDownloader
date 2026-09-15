@@ -1,8 +1,10 @@
 # Release do PixieDownloader: `git tag v1.4.0 && git push origin v1.4.0` cria a GitHub Release com os dois .zip,
-# o zip de cada plugin e o .nupkg do SDK — e, se o secret NUGET_API_KEY existir, publica o SDK no nuget.org
-# (a mesma versão do Sdk sai em várias releases do app; --skip-duplicate faz a segunda vez ser no-op).
-# O push fica aqui dentro, e não num workflow disparado por `release: published`, porque uma release criada
-# com o GITHUB_TOKEN não dispara outros workflows (regra do GitHub contra recursão).
+# o zip de cada plugin e o .nupkg do SDK — e publica o SDK no nuget.org por Trusted Publishing (OIDC: o
+# NuGet/login troca o token do GitHub por uma key de minutos; nada guardado em secret). Isso exige, no
+# nuget.org, uma trust policy para ESTE arquivo (Sakamoto0110/PixieDownloader, release.yml); sem ela os dois
+# últimos passos falham sem derrubar a release (continue-on-error). A mesma versão do Sdk sai em várias
+# releases do app; --skip-duplicate faz a segunda vez ser no-op. O push fica aqui dentro, e não num workflow
+# disparado por `release: published`, porque release criada com o GITHUB_TOKEN não dispara outros workflows.
 # O trabalho todo está em scripts/release.ps1 (o mesmo que roda localmente); aqui só tem o runner, o SDK,
 # e o `gh release create`. O tag precisa bater com o <Version> do .csproj — o script recusa se não bater.
 # Dependências fixadas de propósito (sem "latest"): runner, actions por SHA, SDK exato, tools dentro do script.
@@ -15,6 +17,7 @@ on:
 
 permissions:
   contents: write   # gh release create
+  id-token: write   # NuGet/login (Trusted Publishing)
 
 jobs:
   release:
@@ -40,12 +43,18 @@ jobs:
           gh release create $tag --verify-tag --title "PixieDownloader $($tag.TrimStart('v'))" --notes-file bin/release/RELEASE_NOTES.md --generate-notes @assets
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Log in to nuget.org (Trusted Publishing)
+        id: nuget
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        continue-on-error: true
+        with:
+          user: Nekovih
+
       - name: Publish SDK to nuget.org
+        if: steps.nuget.outcome == 'success'
         shell: pwsh
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        continue-on-error: true
         run: |
-          if (-not $env:NUGET_API_KEY) { Write-Host "::warning::secret NUGET_API_KEY não configurado — o SDK não foi publicado no nuget.org"; exit 0 }
           $nupkg = (Get-Item bin/release/PixieDownloader.Sdk.*.nupkg).FullName
-          dotnet nuget push $nupkg --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+          dotnet nuget push $nupkg --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
