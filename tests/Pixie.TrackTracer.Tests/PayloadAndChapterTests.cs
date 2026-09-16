@@ -106,6 +106,32 @@ public sealed class PayloadAndChapterTests : IDisposable
     }
 
     [Fact]
+    public async Task An_expanded_tree_goes_whole_into_the_file_while_the_chapters_stay_this_files_timeline()
+    {
+        var payload = TracklistPayload.From(Video, List);
+        var nested = new VideoInfo("xyz", "Outro mega mix", "DJ", TimeSpan.FromMinutes(30), null, "https://www.youtube.com/watch?v=xyz")
+        {
+            Metadata = new Dictionary<string, string> { ["description"] = "0:00 Dentro um\n10:00 Dentro dois https://www.youtube.com/watch?v=deep\n20:00 Dentro três" },
+        };
+        var expander = new Pixie.TrackTracer.Expansion.TracklistExpander((url, _) => Task.FromResult<UrlInfo>(new VideoUrlInfo { OriginalUrl = url, Video = nested }));
+        var linked = payload.Root.Children[1];
+        Assert.Equal(Pixie.TrackTracer.Expansion.ExpandOutcome.Resolved, await expander.ExpandAsync(linked, 1, [payload.Root], CancellationToken.None));
+
+        var written = Id3ChapterWriter.Write(_mp3, payload, Video.Duration);
+
+        Assert.Equal(3, written);   // the nested tracks are another file's timeline: no CHAP for them
+        var back = Id3ChapterWriter.Read(_mp3)!;
+        Assert.Equal(1, back.PayloadVersion);   // the format did not change: children were always a list
+        var inner = back.Root.Children[1];
+        Assert.Equal(NodeState.Resolved, inner.State);
+        Assert.Equal(NodeKind.Playlist, inner.Kind);
+        Assert.Equal(["Dentro um", "Dentro dois", "Dentro três"], inner.Children.Select(c => c.Title));
+        Assert.Equal(600_000, inner.Children[1].TimestampMs);
+        Assert.Equal(NodeState.Unresolved, inner.Children[1].State);
+        Assert.Equal("https://www.youtube.com/watch?v=deep", inner.Children[1].Url);
+    }
+
+    [Fact]
     public void A_cancellation_before_the_swap_leaves_the_original_untouched_and_no_temp_behind()
     {
         var before = File.ReadAllBytes(_mp3);

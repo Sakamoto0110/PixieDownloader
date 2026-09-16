@@ -441,14 +441,19 @@ abaixo são releases de plugin.
 bloco descritos acima. Entrou antes do aninhamento porque fecha sozinho: não
 depende de fonte externa e o que o app baixa passa a ter onde aparecer.
 
-### TrackTracer 1.1 — aninhamento
+### TrackTracer 1.1 — aninhamento (saiu 2026-09-15, `tracktracer-v1.1.0`)
 
-1. Destrava a profundidade
-2. Expansão lazy com detecção de ciclo
-3. `failed` com motivo e retry seletivo
+1. Destrava a profundidade — *seletor na aba (1–6, padrão 3), salvo pelo
+   próprio plugin em `data/tracktracer/settings.json`*
+2. Expansão lazy com detecção de ciclo — *botão por link e "Expandir tudo"
+   em largura, uma análise por vez; ciclo = mesmo vídeo (id do YouTube ou
+   URL normalizada) já no caminho acima, marcado `failed` sem buscar*
+3. `failed` com motivo e retry seletivo — *a mensagem da análise na linha e
+   "Tentar de novo" só nela; "Expandir tudo" não retenta*
 
-O formato não muda — é só UI e loader de camada. Sem mudança no app, a não
-ser que o plugin precise de algo novo do host (aí é Sdk 1.2 e um app novo).
+O formato não mudou — `payloadVersion` continua 1, só UI e loader de camada.
+Link pra playlist vira um filho por vídeo, cada um expansível. Sem mudança no
+app (Sdk 1.1).
 
 ### Discovery 1.0 — módulo 3
 

@@ -1,7 +1,7 @@
 using System.IO;
 using System.Windows;
 using Pixie.TrackTracer.Detection;
-using Pixie.TrackTracer.Model;
+using Pixie.TrackTracer.Expansion;
 using Pixie.TrackTracer.Tagging;
 using PixieDownloader.Sdk;
 using YtDlpCore;
@@ -12,14 +12,18 @@ namespace Pixie.TrackTracer;
 /// Module 1 of the roadmap — TrackTracer, because it traces the tracks of a mix from whatever people wrote
 /// around it. Every single-video analysis the app runs goes through the heuristic detector (description →
 /// pinned comment → uploader's comment → most liked → yt-dlp chapters as fallback); the "Tracklist" tab
-/// shows the candidates with their counts and lets the user pick one; and when that video downloads as an
-/// MP3, the chosen list goes into the file as ID3 chapters plus the full tree. The plugin never touches the
-/// host beyond <see cref="IPluginHost"/> and knows no other plugin.
+/// shows the candidates with their counts and lets the user pick one, and expands a linked track — a mix
+/// inside the mix — on a click, through the same analysis and detector, down to a depth the user sets
+/// (1.1); and when that video downloads as an MP3, the chosen list goes into the file as ID3 chapters plus
+/// the full tree, expansions included. The plugin never touches the host beyond <see cref="IPluginHost"/>
+/// and knows no other plugin.
 /// </summary>
 public sealed class TrackTracerPlugin : IPixiePlugin, IUiContribution
 {
     private IPluginHost _host = null!;
-    private readonly TracklistTabViewModel _tab = new();
+    private TrackTracerSettings _settings = null!;
+    private TracklistExpander _expander = null!;
+    private TracklistTabViewModel _tab = null!;
 
     // What was found per analysed video, keyed by the URL the download request will carry (the video's
     // webpage URL). A later download of the same video finds its list here.
@@ -28,6 +32,11 @@ public sealed class TrackTracerPlugin : IPixiePlugin, IUiContribution
     public void Configure(IPluginHost host)
     {
         _host = host;
+        _settings = TrackTracerSettings.Load(host.DataDirectory);
+        // A linked track is analysed exactly like the user's own URL: as a single video (a playlist URL still
+        // comes back as a playlist), comments included — the pinned comment is where tracklists hide.
+        _expander = new TracklistExpander((url, ct) => host.Downloads.AnalyzeUrlAsync(url, treatAsPlaylist: false, fetchComments: true, ct), _settings.MaxDepth);
+        _tab = new TracklistTabViewModel(_expander, _settings, (level, message) => host.Log(level, message), host.ShutdownToken);
         host.RequireAnalysisComments();   // the pinned comment is where a tracklist lives when it is not in the description
         host.AnalysisCompleted += OnAnalysisCompleted;
         host.DownloadCompleted += OnDownloadCompleted;
@@ -57,7 +66,7 @@ public sealed class TrackTracerPlugin : IPixiePlugin, IUiContribution
 
     private void OnDownloadCompleted(object? sender, DownloadCompletedEventArgs e)
     {
-        if (!_analysed.TryGetValue(e.Request.Url, out var analysed) || !analysed.WriteToFile || analysed.Selected is not { } list)
+        if (!_analysed.TryGetValue(e.Request.Url, out var analysed) || !analysed.WriteToFile || analysed.Payload is not { } payload)
             return;
         var path = e.Result.OutputFilePath;
         if (path is null)
@@ -68,7 +77,7 @@ public sealed class TrackTracerPlugin : IPixiePlugin, IUiContribution
             return;
         }
 
-        var payload = TracklistPayload.From(analysed.Video, list);
+        // The tree as the tab shows it, links expanded and all — not rebuilt from the list, which would drop them.
         var duration = analysed.Video.Duration;
         var token = _host.ShutdownToken;
         // The file is ours to touch now (yt-dlp is done), but tagging a big MP3 can take a moment — off the UI thread.

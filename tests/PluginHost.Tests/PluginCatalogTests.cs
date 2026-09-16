@@ -23,6 +23,11 @@ public sealed class PluginCatalogTests : IDisposable
     private static readonly string HelloOutput = OutputOf("HelloPluginOutput");
     private static readonly string TrackTracerOutput = OutputOf("TrackTracerPluginOutput");   // the real plugin: one entry class, no plugin.json
 
+    /// <summary>The built plugin's own version (its csproj &lt;Version&gt;), so a plugin release does not break the host's tests.</summary>
+    private static string TrackTracerVersion => BuiltVersionOf(Path.Combine(TrackTracerOutput, "Pixie.TrackTracer.dll"));
+
+    private static string BuiltVersionOf(string dll) => AssemblyName.GetAssemblyName(dll).Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "?";
+
     private static string OutputOf(string key) =>
         typeof(PluginCatalogTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == key).Value!;
 
@@ -240,7 +245,7 @@ public sealed class PluginCatalogTests : IDisposable
         var m = plugin.Manifest!;
         Assert.Equal("tracktracer", m.Id);                                 // the folder
         Assert.Equal("TrackTracer", m.Name);                               // <AssemblyTitle>
-        Assert.Equal("1.0.0", m.Version);                                  // <Version>
+        Assert.Equal(TrackTracerVersion, m.Version);                       // <Version>
         Assert.Equal($"{SdkVersion.Current.Major}.{SdkVersion.Current.Minor}", m.ApiVersion);   // the Sdk it was compiled against
         Assert.Equal("Pixie.TrackTracer.dll", m.AssemblyFile);             // the one DLL referencing the Sdk (TagLibSharp.dll is skipped)
         Assert.Equal("Pixie.TrackTracer.TrackTracerPlugin", m.EntryType);  // the one IPixiePlugin class

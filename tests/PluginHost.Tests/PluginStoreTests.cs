@@ -24,6 +24,10 @@ public sealed class PluginStoreTests : IDisposable
     private static readonly string TrackTracerOutput =
         typeof(PluginStoreTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "TrackTracerPluginOutput").Value!;
 
+    /// <summary>The built plugin's own version: what its DLL says, which is what the catalog reads once it is installed.</summary>
+    private static string TrackTracerVersion =>
+        AssemblyName.GetAssemblyName(Path.Combine(TrackTracerOutput, "Pixie.TrackTracer.dll")).Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "?";
+
     private readonly string _root = Path.Combine(Path.GetTempPath(), "pixie-store-tests", Guid.NewGuid().ToString("N"));
     private readonly List<IDisposable> _disposables = [];
 
@@ -47,7 +51,7 @@ public sealed class PluginStoreTests : IDisposable
         var plugin = Assert.Single(catalog.Plugins);
         Assert.Equal("tracktracer", plugin.Id);
         Assert.Equal("TrackTracer", plugin.Name);
-        Assert.Equal("1.0.0", plugin.Version);
+        Assert.Equal(TrackTracerVersion, plugin.Version);
         Assert.Equal(Path.GetFileName(zip), plugin.Asset);
         Assert.Equal(Sha256Of(zip), plugin.Sha256);
     }
@@ -214,13 +218,13 @@ public sealed class PluginStoreTests : IDisposable
             outcome = catalog.Install(again.Folder);
 
         Assert.Equal(PluginInstallOutcome.PendingRestart, outcome);
-        Assert.Equal("1.0.0", plugin.PendingUpdateVersion);
+        Assert.Equal(TrackTracerVersion, plugin.PendingUpdateVersion);
         Assert.Equal(1, changes);
         Assert.True(File.Exists(Path.Combine(PluginsDir, PluginCatalog.UpdateFolderPrefix + "tracktracer", "Pixie.TrackTracer.dll")));
         Assert.Equal(PluginStatus.Loaded, plugin.Status);   // untouched until the restart
         catalog.Rescan();
         Assert.Single(catalog.Plugins);                      // the parked copy is never listed as a plugin of its own
-        Assert.Equal("1.0.0", catalog.Plugins[0].PendingUpdateVersion);
+        Assert.Equal(TrackTracerVersion, catalog.Plugins[0].PendingUpdateVersion);
     }
 
     [Fact]
@@ -316,7 +320,7 @@ public sealed class PluginStoreTests : IDisposable
     }
 
     private static StorePlugin Entry(string id, string zip) =>
-        new(id, "TrackTracer", "1.0.0", "1.1", "Acha a tracklist.", Path.GetFileName(zip), Sha256Of(zip), new FileInfo(zip).Length);
+        new(id, "TrackTracer", TrackTracerVersion, "1.1", "Acha a tracklist.", Path.GetFileName(zip), Sha256Of(zip), new FileInfo(zip).Length);
 
     private void WriteCatalog(params StorePlugin[] plugins)
     {

@@ -18,7 +18,7 @@ public enum NodeKind
 /// </summary>
 public enum NodeState
 {
-    /// <summary>Never expanded — in 1.6 every linked track is this: depth is locked at one.</summary>
+    /// <summary>Never expanded. A linked track starts here; expanding it (1.1) is what fills its children.</summary>
     Unresolved,
     /// <summary>Expanded and it has tracks.</summary>
     Resolved,
@@ -43,6 +43,55 @@ public sealed class TracklistNode
     public required NodeState State { get; set; }
     public string? Error { get; set; }
     public List<TracklistNode> Children { get; set; } = [];
+
+    /// <summary>One child per entry of a detected list — the same mapping at the root and at any depth.</summary>
+    public static List<TracklistNode> ChildrenFrom(Tracklist list) => list.Entries.Select(e => new TracklistNode
+    {
+        Title = string.IsNullOrWhiteSpace(e.Text) ? e.Raw.Trim() : e.Text,
+        Kind = NodeKind.Track,
+        TimestampMs = e.Start is { } s ? (long)s.TotalMilliseconds : null,
+        Url = e.Link,
+        State = e.Link is null ? NodeState.Empty : NodeState.Unresolved,
+    }).ToList();
+
+    /// <summary>One child per video of a linked playlist: no timestamps (they are separate files), each expandable in turn.</summary>
+    public static List<TracklistNode> ChildrenFrom(PlaylistInfo playlist) => playlist.Items.Select(v => new TracklistNode
+    {
+        Title = v.Title,
+        Kind = NodeKind.Track,
+        Url = string.IsNullOrWhiteSpace(v.WebpageUrl) ? null : v.WebpageUrl,
+        State = string.IsNullOrWhiteSpace(v.WebpageUrl) ? NodeState.Empty : NodeState.Unresolved,
+    }).ToList();
+
+    /// <summary>
+    /// What makes two nodes "the same video" for cycle detection: the YouTube id when the URL has one
+    /// (<c>watch?v=</c>, <c>youtu.be/</c>, <c>/shorts/</c>, <c>/live/</c>), else the URL itself, trimmed and
+    /// case-folded. Null for a node without a link.
+    /// </summary>
+    public static string? KeyOf(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+        var trimmed = url.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            var shortHost = uri.Host.Equals("youtu.be", StringComparison.OrdinalIgnoreCase);
+            if (shortHost || uri.Host.EndsWith("youtube.com", StringComparison.OrdinalIgnoreCase))
+            {
+                var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                if (query["v"] is { Length: > 0 } v)
+                    return "yt:" + v;
+                var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (shortHost && segments.Length >= 1)
+                    return "yt:" + segments[0];
+                if (segments.Length >= 2 && segments[0] is "shorts" or "live" or "embed" or "v")
+                    return "yt:" + segments[1];
+                if (query["list"] is { Length: > 0 } list)
+                    return "ytlist:" + list;
+            }
+        }
+        return trimmed.TrimEnd('/').ToLowerInvariant();
+    }
 }
 
 /// <summary>
@@ -73,9 +122,10 @@ public sealed class TracklistPayload
     public static TracklistPayload? FromJson(string json) => JsonSerializer.Deserialize<TracklistPayload>(json, Json);
 
     /// <summary>
-    /// The 1.6 tree: the analysed video as the root playlist, one child per detected track. A track that
-    /// carries a link is left <see cref="NodeState.Unresolved"/> — it may itself be a mix — and a plain one is
-    /// <see cref="NodeState.Empty"/>; nothing is expanded until 1.8 unlocks the depth.
+    /// The tree as the analysis leaves it: the analysed video as the root playlist, one child per detected
+    /// track. A track that carries a link is left <see cref="NodeState.Unresolved"/> — it may itself be a mix,
+    /// and expanding it (<c>TracklistExpander</c>) is what fills its children — and a plain one is
+    /// <see cref="NodeState.Empty"/>.
     /// </summary>
     public static TracklistPayload From(VideoInfo video, Tracklist list)
     {
@@ -85,14 +135,7 @@ public sealed class TracklistPayload
             Kind = NodeKind.Playlist,
             Url = video.WebpageUrl,
             State = NodeState.Resolved,
-            Children = list.Entries.Select(e => new TracklistNode
-            {
-                Title = string.IsNullOrWhiteSpace(e.Text) ? e.Raw.Trim() : e.Text,
-                Kind = NodeKind.Track,
-                TimestampMs = e.Start is { } s ? (long)s.TotalMilliseconds : null,
-                Url = e.Link,
-                State = e.Link is null ? NodeState.Empty : NodeState.Unresolved,
-            }).ToList(),
+            Children = TracklistNode.ChildrenFrom(list),
         };
         return new TracklistPayload { Source = SourceName(list.Source), Root = root };
     }

@@ -48,10 +48,21 @@
 
                 <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" SharedSizeGroup="Track"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="{Binding Summary}" Style="{DynamicResource Hint}"/>
+                    <TextBlock Grid.Column="0" Text="{Binding Summary}" Style="{DynamicResource Hint}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                    <!-- Expansion: every link at once, one analysis at a time, and how deep it may go -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
+                        <Button Content="{Binding ExpandAllLabel}" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12"
+                                Command="{Binding ExpandAllCommand}" Visibility="{Binding HasExpandable, Converter={StaticResource BoolToVis}}"
+                                ToolTip="Analisa cada link da lista (um por vez, 2–4 s cada) e aninha o que achar, até o limite de profundidade"/>
+                        <Button Content="Parar" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="6,0,0,0"
+                                Command="{Binding StopExpandCommand}" Visibility="{Binding IsExpandingAll, Converter={StaticResource BoolToVis}}"/>
+                        <TextBlock Text="profundidade" Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,6,0"/>
+                        <ComboBox ItemsSource="{Binding DepthOptions}" SelectedItem="{Binding MaxDepth, Mode=TwoWay}" MinWidth="56" FontSize="12"
+                                  ToolTip="Até onde a árvore pode ir: 1 = só a lista deste vídeo; 2 = os links dela; 3 = os links dos links… Fica salvo."/>
+                    </StackPanel>
                 </Grid>
 
                 <!-- Detection notes (hints the detector saw: "tracklist in the comments", an external link…) -->
@@ -70,38 +81,69 @@
                              MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
                 </Expander>
 
-                <!-- The tracks -->
+                <!-- The tracks: a tree. The row template is implicit for NodeRow, so the inner ItemsControl of each
+                     row renders the children with the same template — nesting without a TreeView (the theme has no
+                     style for one). Depth shows as indentation; a linked row expands on its button. -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding Entries}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="{x:Type local:EntryRow}">
-                                <Grid Margin="0,2">
+                    <ScrollViewer.Resources>
+                        <DataTemplate DataType="{x:Type local:NodeRow}">
+                            <StackPanel>
+                                <Grid Margin="{Binding Indent}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" SharedSizeGroup="Track"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <Grid Grid.Column="0">
+                                    <Grid Grid.Column="0" Margin="0,2">
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="18"/>
                                             <ColumnDefinition Width="32"/>
                                             <ColumnDefinition Width="74"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{Binding Number}" Style="{DynamicResource Hint}" FontFamily="{DynamicResource Font.Mono}"/>
-                                        <TextBlock Grid.Column="1" Text="{Binding Time}" FontFamily="{DynamicResource Font.Mono}"
+                                        <!-- ▾/▸ folds an expanded row; nothing for a leaf -->
+                                        <Button Grid.Column="0" Content="{Binding CollapseGlyph}" Style="{DynamicResource IconButton}" Padding="0" Width="16" Height="16"
+                                                FontSize="11" HorizontalAlignment="Left" Command="{Binding ToggleCollapseCommand}"
+                                                Visibility="{Binding HasChildren, Converter={StaticResource BoolToVis}}" ToolTip="Recolher / mostrar as faixas de dentro"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Number}" Style="{DynamicResource Hint}" FontFamily="{DynamicResource Font.Mono}"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding Time}" FontFamily="{DynamicResource Font.Mono}"
                                                    Foreground="{DynamicResource Brush.Text.Secondary}"/>
-                                        <TextBlock Grid.Column="2" Text="{Binding Text}" MaxWidth="520" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
+                                        <TextBlock Grid.Column="3" Text="{Binding Text}" MaxWidth="520" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
                                     </Grid>
-                                    <TextBlock Grid.Column="1" Margin="24,0,0,0" HorizontalAlignment="Left" TextTrimming="CharacterEllipsis"
-                                               Visibility="{Binding HasLink, Converter={StaticResource BoolToVis}}">
-                                        <Hyperlink NavigateUri="{Binding Link}" RequestNavigate="OnLinkRequested" ToolTip="{Binding Link}"
-                                                   Foreground="{DynamicResource Brush.Text.Secondary}">
-                                            <Run Text="{Binding Link, Mode=OneWay}"/>
-                                        </Hyperlink>
-                                    </TextBlock>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="24,2,0,2" VerticalAlignment="Center">
+                                        <TextBlock HorizontalAlignment="Left" TextTrimming="CharacterEllipsis" MaxWidth="360" VerticalAlignment="Center"
+                                                   Visibility="{Binding HasLink, Converter={StaticResource BoolToVis}}">
+                                            <Hyperlink NavigateUri="{Binding Link}" RequestNavigate="OnLinkRequested" ToolTip="{Binding Link}"
+                                                       Foreground="{DynamicResource Brush.Text.Secondary}">
+                                                <Run Text="{Binding Link, Mode=OneWay}"/>
+                                            </Hyperlink>
+                                        </TextBlock>
+                                        <!-- The link's expansion: the button, then what it found (or why it did not) -->
+                                        <Button Content="Expandir" Style="{DynamicResource GhostButton}" Padding="8,2" FontSize="11" Margin="10,0,0,0"
+                                                Command="{Binding ExpandCommand}" Visibility="{Binding ShowExpand, Converter={StaticResource BoolToVis}}"
+                                                ToolTip="Analisa esse link como um vídeo e aninha a tracklist dele aqui (2–4 s)"/>
+                                        <Button Content="Tentar de novo" Style="{DynamicResource GhostButton}" Padding="8,2" FontSize="11" Margin="10,0,0,0"
+                                                Command="{Binding ExpandCommand}" Visibility="{Binding ShowRetry, Converter={StaticResource BoolToVis}}"/>
+                                        <TextBlock Text="{Binding StateText}" Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="420"
+                                                   ToolTip="{Binding StateText}" Visibility="{Binding ShowState, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsFailed}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.Error}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
                                 </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                                <!-- The tracks found inside this one, same template, one level in -->
+                                <ItemsControl ItemsSource="{Binding Children}" Visibility="{Binding ShowChildren, Converter={StaticResource BoolToVis}}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ScrollViewer.Resources>
+                    <ItemsControl ItemsSource="{Binding Entries}"/>
                 </ScrollViewer>
             </DockPanel>
         </DockPanel>
