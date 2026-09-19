@@ -40,12 +40,13 @@ public sealed class TempTree : IDisposable
     public string Full(string relative) => Path.Combine(Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
     /// <summary>
-    /// Waits (up to a few seconds) until the folder's mtime differs from <paramref name="previous"/>. NTFS publishes
-    /// a directory's new timestamp to its parent lazily, so a scan started right after a rename or a create can
-    /// still read the old stamp and reuse the folder — seen on the GitHub runner, never on a desktop. Listing the
-    /// folder opens and closes a handle on it, which is what makes the stamp current.
+    /// Waits (up to a few seconds) for the folder's mtime to differ from <paramref name="previous"/> and says whether it
+    /// did. NTFS on a desktop stamps a folder the moment a file inside it is created, deleted or renamed; the GitHub
+    /// runner's temp drive stamps it for a create or a delete but was never seen to for a rename (5 s) — there the
+    /// incremental scan cannot see a rename and the full scan is the catch-up, so a test about it stands down.
+    /// Listing the folder opens and closes a handle on it, which is what publishes a lazy stamp.
     /// </summary>
-    public void WaitForFolderChange(DateTime previous, string relative = "")
+    public bool WaitForFolderChange(DateTime previous, string relative = "")
     {
         var dir = relative.Length == 0 ? Root : Full(relative);
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -54,25 +55,7 @@ public sealed class TempTree : IDisposable
             _ = Directory.EnumerateFileSystemEntries(dir).FirstOrDefault();
             Thread.Sleep(5);
         }
-    }
-
-    /// <summary>
-    /// Whether this file system stamps a folder when a file inside it is renamed. NTFS on a desktop does; the
-    /// GitHub runner's temp drive does not (create and delete stamp it, rename never did in 5 s), and there the
-    /// incremental scan cannot see a rename — the full scan is the catch-up. A test about renames asks first.
-    /// </summary>
-    public bool RenameStampsTheFolder()
-    {
-        var probe = Junk(".probe-" + Guid.NewGuid().ToString("N") + ".tmp");
-        _ = Directory.EnumerateFileSystemEntries(Root).FirstOrDefault();
-        var before = Directory.GetLastWriteTimeUtc(Root);
-        Thread.Sleep(15);
-        var renamed = probe + ".renamed";
-        File.Move(probe, renamed);
-        WaitForFolderChange(before);
-        var changed = Directory.GetLastWriteTimeUtc(Root) != before;
-        File.Delete(renamed);
-        return changed;
+        return Directory.GetLastWriteTimeUtc(dir) != previous;
     }
 
     public void Dispose()

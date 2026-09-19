@@ -86,15 +86,14 @@ public sealed class LibraryScannerTests : IDisposable
     [Fact]
     public void A_renamed_file_is_a_new_entry_read_again()
     {
-        if (!_tree.RenameStampsTheFolder())
-            return;   // a file system that does not stamp the folder on a rename (the GitHub runner's) cannot show this; the full scan is the catch-up there
         var a = _tree.Mp3("a.mp3");
         var first = Scan();
         _tags.Calls.Clear();
 
         var renamed = _tree.Full("renamed.mp3");
         File.Move(a, renamed);
-        _tree.WaitForFolderChange(first.Index.Directories.Single().Modified);   // the stamp NTFS shows for the folder lags the rename
+        if (!_tree.WaitForFolderChange(first.Index.Directories.Single().Modified))
+            return;   // this volume did not stamp the folder for the rename (the GitHub runner's temp drive): the incremental scan cannot see it; the full scan is the catch-up
         var second = Scan(first.Index);
 
         Assert.Equal([renamed], _tags.Calls);
