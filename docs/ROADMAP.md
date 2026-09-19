@@ -441,6 +441,19 @@ abaixo são releases de plugin.
 bloco descritos acima. Entrou antes do aninhamento porque fecha sozinho: não
 depende de fonte externa e o que o app baixa passa a ter onde aparecer.
 
+### Library 1.1 — pastas + VLC (2026-09-16, `library-v1.1.0`)
+
+(O passo seguinte — pastas e itens virtuais, links, importação de arquivo avulso —
+tem a análise em [`library-model.md`](library-model.md): a separação Manifest /
+Index / Filesystem, a matriz de estados e quebras de link, e o modelo de
+identidade. Ainda não implementado.)
+
+A lista agrupada por pasta com cabeçalhos que abrem e fecham (WPF grouping
+sobre a mesma `ListCollectionView`, um `Expander` por pasta, estado no objeto
+compartilhado pelas linhas — nada de árvore virtual ainda), e o botão que baixa
+o VLC portátil oficial pra `tools\vlc` e o escolhe como player. Sem mudança no
+app (Sdk 1.1).
+
 ### TrackTracer 1.1 — aninhamento (saiu 2026-09-15, `tracktracer-v1.1.0`)
 
 1. Destrava a profundidade — *seletor na aba (1–6, padrão 3), salvo pelo

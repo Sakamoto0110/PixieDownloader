@@ -7,6 +7,60 @@
          needs is WPF's own, kept here so the view stands on its own. -->
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <local:FileCountConverter x:Key="FileCount"/>
+
+        <!-- A folder header of the grouped list. An Expander on purpose: GroupItem special-cases one when the
+             list virtualises by group (it re-measures a container recycled from a collapsed folder onto an open
+             one), and its HeaderSite is what the panel measures as the header. The flag lives in the
+             FolderGroup, not here: this container comes and goes with the scroll. -->
+        <Style x:Key="FolderExpander" TargetType="Expander">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <DockPanel>
+                            <ToggleButton x:Name="HeaderSite" DockPanel.Dock="Top" Focusable="False"
+                                          IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ToolTip="{Binding Name.Directory}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="bd" Background="{DynamicResource Brush.Bg.Elevated}" CornerRadius="6" Padding="10,7" Margin="0,3,0,1">
+                                            <DockPanel>
+                                                <Path x:Name="arrow" DockPanel.Dock="Left" Data="M 0 0 L 4 4 L 0 8" VerticalAlignment="Center" Margin="2,0,12,0"
+                                                      Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="1.5" RenderTransformOrigin="0.5,0.5"/>
+                                                <TextBlock DockPanel.Dock="Right" Text="{Binding ItemCount, Converter={StaticResource FileCount}}"
+                                                           Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                                <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                                    <Run Text="{Binding Name.Prefix, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Name.Title, Mode=OneWay}" FontWeight="SemiBold"/>
+                                                </TextBlock>
+                                            </DockPanel>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource Brush.Bg.Hover}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="arrow" Property="RenderTransform">
+                                                    <Setter.Value>
+                                                        <RotateTransform Angle="90"/>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ExpandSite" Visibility="Collapsed" Focusable="False"/>
+                        </DockPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="True">
+                                <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <Border Style="{DynamicResource Card}" Padding="14">
@@ -38,14 +92,49 @@
                     Background="{DynamicResource Brush.Bg.Elevated}" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="1"
                     Visibility="{Binding ShowSettings, Converter={StaticResource BoolToVis}}">
                 <StackPanel>
+                    <!-- Right-docked, so the XAML order is the reverse of what is seen:
+                         [Escolher programa…] [Usar VLC] [cone = baixar e usar] [Padrão do Windows] -->
                     <DockPanel Margin="0,0,0,8">
                         <TextBlock DockPanel.Dock="Left" Text="Abrir com:" Style="{DynamicResource Label}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <Button DockPanel.Dock="Right" Content="Padrão do Windows" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12"
                                 Command="{Binding UseDefaultPlayerCommand}" ToolTip="Volta a abrir com o programa que o Windows associa a cada tipo de arquivo"/>
+                        <Button DockPanel.Dock="Right" Style="{DynamicResource IconButton}" Padding="5" Margin="0,0,8,0" VerticalAlignment="Center"
+                                Command="{Binding DownloadVlcCommand}" ToolTip="{Binding DownloadVlcToolTip}">
+                            <Image Source="{Binding VlcIcon}" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True">
+                                <Image.Style>
+                                    <Style TargetType="Image">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsEnabled, RelativeSource={RelativeSource AncestorType=Button}}" Value="False">
+                                                <Setter Property="Opacity" Value="0.35"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Image.Style>
+                            </Image>
+                        </Button>
+                        <Button DockPanel.Dock="Right" Content="Usar VLC" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="0,0,6,0"
+                                Command="{Binding UseVlcCommand}" ToolTip="{Binding UseVlcToolTip}" ToolTipService.ShowOnDisabled="True"/>
                         <Button DockPanel.Dock="Right" Content="Escolher programa…" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="0,0,6,0"
                                 Command="{Binding ChoosePlayerCommand}" ToolTip="VLC é a recomendação: abre qualquer formato e mostra os capítulos de um mix"/>
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding VlcStatusText}" Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                   Visibility="{Binding IsVlcBusy, Converter={StaticResource BoolToVis}}"/>
                         <TextBlock Text="{Binding PlayerText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding PlayerText}"/>
                     </DockPanel>
+                    <!-- The cone's question when a VLC is already here -->
+                    <Border Margin="0,0,0,8" Padding="10,7" CornerRadius="6" Background="{DynamicResource Brush.Accent.Subtle}"
+                            Visibility="{Binding ShowVlcPrompt, Converter={StaticResource BoolToVis}}">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                                <Button Content="{Binding VlcPromptUseLabel}" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="0,0,6,0"
+                                        Command="{Binding VlcPromptUseCommand}"/>
+                                <Button Content="{Binding VlcPromptDownloadLabel}" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="0,0,6,0"
+                                        Command="{Binding VlcPromptDownloadCommand}"/>
+                                <Button Content="Cancelar" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12"
+                                        Command="{Binding VlcPromptCancelCommand}"/>
+                            </StackPanel>
+                            <TextBlock Text="{Binding VlcPromptText}" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12"/>
+                        </DockPanel>
+                    </Border>
                     <CheckBox IsChecked="{Binding AutoAddRoots, Mode=TwoWay}" Margin="0,0,0,4"
                               Content="Um download numa pasta fora do catálogo coloca essa pasta no catálogo"
                               ToolTip="Desligado, o download fora das pastas cadastradas fica de fora (vai pro log)"/>
@@ -110,10 +199,11 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
-                <!-- Search, type, order -->
+                <!-- Search, type, order, folders -->
                 <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
@@ -139,7 +229,10 @@
                     <ComboBox Grid.Column="1" ItemsSource="{Binding KindOptions}" SelectedItem="{Binding SelectedKind, Mode=TwoWay}"
                               DisplayMemberPath="Label" MinWidth="96" Margin="10,0,0,0" ToolTip="Tipo de arquivo"/>
                     <ComboBox Grid.Column="2" ItemsSource="{Binding SortOptions}" SelectedItem="{Binding SelectedSort, Mode=TwoWay}"
-                              DisplayMemberPath="Label" MinWidth="110" Margin="6,0,0,0" ToolTip="Ordem"/>
+                              DisplayMemberPath="Label" MinWidth="110" Margin="6,0,0,0" ToolTip="Ordem (dentro de cada pasta, quando agrupado)"/>
+                    <ToggleButton Grid.Column="3" Content="Pastas" Style="{DynamicResource GhostToggleButton}" Padding="10,5" FontSize="12" Margin="6,0,0,0"
+                                  IsChecked="{Binding GroupByFolder, Mode=TwoWay}"
+                                  ToolTip="Agrupa por pasta: cada pasta é um cabeçalho que abre e fecha (fechadas de início; buscar abre todas). Desligado, uma lista só na ordem escolhida."/>
                 </Grid>
 
                 <!-- Footer: what the list is showing right now -->
@@ -149,10 +242,35 @@
                     <TextBlock Text="Nada com esse filtro." Style="{DynamicResource Hint}" HorizontalAlignment="Center" Margin="0,24,0,0"
                                Visibility="{Binding ShowNoMatches, Converter={StaticResource BoolToVis}}"/>
 
-                    <!-- Virtualised over the whole catalogue; the view does the filter and the sort -->
+                    <!-- Virtualised over the whole catalogue, by group when grouped; the view does the filter, the sort
+                         and the grouping. The group's Name is the FolderGroup shared by its rows, so the header binds
+                         through it and the expanded flag survives the container. -->
                     <ListBox x:Name="FileList" ItemsSource="{Binding RowsView}"
                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                             VirtualizingPanel.IsVirtualizingWhenGrouping="True"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.Panel>
+                                    <ItemsPanelTemplate>
+                                        <VirtualizingStackPanel/>
+                                    </ItemsPanelTemplate>
+                                </GroupStyle.Panel>
+                                <GroupStyle.ContainerStyle>
+                                    <Style TargetType="GroupItem">
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="GroupItem">
+                                                    <Expander Style="{StaticResource FolderExpander}" IsExpanded="{Binding Name.IsExpanded, Mode=TwoWay}">
+                                                        <ItemsPresenter Margin="0,2,0,4"/>
+                                                    </Expander>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </GroupStyle.ContainerStyle>
+                            </GroupStyle>
+                        </ListBox.GroupStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="{x:Type local:LibraryRow}">
                                 <Grid Margin="6,4" Background="Transparent">

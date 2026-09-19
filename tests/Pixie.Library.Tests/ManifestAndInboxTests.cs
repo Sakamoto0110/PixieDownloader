@@ -21,6 +21,7 @@ public sealed class ManifestAndInboxTests : IDisposable
         Assert.Empty(manifest.Roots);
         Assert.True(manifest.AutoAddRoots);
         Assert.True(manifest.AutoSync);
+        Assert.True(manifest.GroupByFolder);
         Assert.Null(manifest.Player);
         Assert.True(File.Exists(ManifestPath));
         Assert.False(File.Exists(ManifestPath + ".tmp"));
@@ -38,6 +39,7 @@ public sealed class ManifestAndInboxTests : IDisposable
             m.Roots.Add(new LibraryRoot("Mixes", @"D:\Music\Mixes"));
             m.Player = @"C:\Program Files\VideoLAN\VLC\vlc.exe";
             m.AutoAddRoots = false;
+            m.GroupByFolder = false;
             m.ExtraExtensions.Add("gif");
         });
         Assert.True(manifest.TryMarkSynced(manifest.Generation, new DateTime(2026, 9, 15, 12, 0, 0, DateTimeKind.Utc)));
@@ -48,6 +50,7 @@ public sealed class ManifestAndInboxTests : IDisposable
         Assert.Equal([new LibraryRoot("Mixes", @"D:\Music\Mixes")], again.Roots);
         Assert.Equal(@"C:\Program Files\VideoLAN\VLC\vlc.exe", again.Player);
         Assert.False(again.AutoAddRoots);
+        Assert.False(again.GroupByFolder);
         Assert.Equal(["gif"], again.ExtraExtensions);
         Assert.Contains(".gif", again.Extensions);
         Assert.Contains(".mp3", again.Extensions);

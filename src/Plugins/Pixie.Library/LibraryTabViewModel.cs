@@ -5,9 +5,11 @@ using System.IO;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Pixie.Library.Catalog;
 using Pixie.Library.Mvvm;
+using Pixie.Library.Player;
 using PixieDownloader.Sdk;
 using YtDlpCore;
 
@@ -70,31 +72,37 @@ public sealed record KindOption(string Label, FileKind? Kind)
 
 /// <summary>
 /// The "Biblioteca" tab. The runner's events come in on pool threads and are marshalled here; the rows are a
-/// flat observable list under a <see cref="ListCollectionView"/> that does the filtering (folder, type, search)
-/// and the sorting, so the list box virtualises over the whole catalogue. Opening the tab shows what the index
-/// had and asks for an incremental sync behind it.
+/// flat observable list under a <see cref="ListCollectionView"/> that does the filtering (folder, type, search),
+/// the sorting and — by default — the grouping by folder, so the list box virtualises over the whole catalogue.
+/// Opening the tab shows what the index had and asks for an incremental sync behind it.
 /// </summary>
 public sealed class LibraryTabViewModel : ObservableObject
 {
     private readonly LibraryManifest _manifest;
     private readonly LibrarySync _sync;
     private readonly IPluginHost _host;
+    private readonly VlcInstaller? _vlc;
     private readonly Dispatcher _dispatcher;
     private readonly Dictionary<string, LibraryRow> _byPath = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, FolderGroup> _groups = new(StringComparer.OrdinalIgnoreCase);
+    private readonly PropertyGroupDescription _grouping = new(nameof(LibraryRow.Group)) { CustomSort = FolderGroup.Comparer };
     private readonly DispatcherTimer _filterTimer;
     private readonly ListCollectionView _view;
+    private bool _searching;
     private bool _opened;
     private DateTime _lastAutoCheck = DateTime.MinValue;
     private string? _progress;
     private IReadOnlyList<string> _unavailable = [];
     private string? _fault;
 
-    internal LibraryTabViewModel(LibraryManifest manifest, LibrarySync sync, IPluginHost host)
+    internal LibraryTabViewModel(LibraryManifest manifest, LibrarySync sync, IPluginHost host, VlcInstaller? vlc = null)
     {
         _manifest = manifest;
         _sync = sync;
         _host = host;
+        _vlc = vlc;
         _dispatcher = Dispatcher.CurrentDispatcher;
+        VlcIcon = vlc is null ? null : Player.VlcIcon.Load();
 
         SortOptions =
         [
@@ -112,6 +120,8 @@ public sealed class LibraryTabViewModel : ObservableObject
         _view = (ListCollectionView)CollectionViewSource.GetDefaultView(Rows);
         _view.CustomSort = _selectedSort.Comparer;
         _view.Filter = o => o is LibraryRow row && Passes(row);
+        if (_manifest.GroupByFolder)
+            _view.GroupDescriptions.Add(_grouping);
 
         _filterTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher) { Interval = TimeSpan.FromMilliseconds(200) };
         _filterTimer.Tick += (_, _) => { _filterTimer.Stop(); RefreshView(); };
@@ -124,7 +134,12 @@ public sealed class LibraryTabViewModel : ObservableObject
         OpenCommand = new RelayCommand<LibraryRow>(Open);
         ShowInFolderCommand = new RelayCommand<LibraryRow>(ShowInFolder);
         ChoosePlayerCommand = new RelayCommand(ChoosePlayer);
-        UseDefaultPlayerCommand = new RelayCommand(() => { _manifest.Update(m => m.Player = null); OnPropertyChanged(nameof(PlayerText)); OnPropertyChanged(nameof(HasPlayer)); }, () => HasPlayer);
+        UseDefaultPlayerCommand = new RelayCommand(() => SetPlayer(null), () => HasPlayer);
+        UseVlcCommand = new RelayCommand(() => SetPlayer(AvailableVlc), () => AvailableVlc is { } vlc && !IsVlcBusy && !IsPlayer(vlc));
+        DownloadVlcCommand = new RelayCommand(AskOrDownloadVlc, () => _vlc is not null && !IsVlcBusy && !ShowVlcPrompt);
+        VlcPromptUseCommand = new RelayCommand(() => { ShowVlcPrompt = false; SetPlayer(AvailableVlc); });
+        VlcPromptDownloadCommand = new RelayCommand(() => { ShowVlcPrompt = false; DownloadVlc(); });
+        VlcPromptCancelCommand = new RelayCommand(() => ShowVlcPrompt = false);
 
         // The rows are built where the event arrives (a pool thread: they are immutable) and folded in on the UI thread.
         _sync.IndexLoaded += index => { var rows = BuildRows(index); Post(() => ApplyRows(rows)); };
@@ -210,6 +225,26 @@ public sealed class LibraryTabViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Folder headers on (the default) or off. Persisted in the manifest: it is how the person likes the list,
+    /// like the player. The view regroups on its own when the description comes or goes.
+    /// </summary>
+    public bool GroupByFolder
+    {
+        get => _manifest.GroupByFolder;
+        set
+        {
+            if (value == _manifest.GroupByFolder)
+                return;
+            _manifest.Update(m => m.GroupByFolder = value);
+            OnPropertyChanged();
+            if (value)
+                _view.GroupDescriptions.Add(_grouping);
+            else
+                _view.GroupDescriptions.Clear();
+        }
+    }
+
     // ───── Status ─────
 
     private bool _isSyncing;
@@ -275,6 +310,74 @@ public sealed class LibraryTabViewModel : ObservableObject
     public string PlayerText => _manifest.Player is { } p ? Path.GetFileNameWithoutExtension(p) + "  (" + p + ")" : "padrão do Windows";
     public bool HasPlayer => _manifest.Player is not null;
 
+    // ───── VLC ─────
+    // The player the tab recommends, two buttons: "Usar VLC" picks the VLC this machine already has — the one
+    // installed in Windows first (looked up once per session, when the tab first opens; never persisted), else
+    // the portable one in tools\vlc — and the cone only downloads (VlcInstaller: the official zip into tools\vlc)
+    // and then picks it. When a VLC is already here, the cone asks first, inline: use that one, download anyway,
+    // or leave it — a second 80 MB for nothing is the mistake to prevent.
+
+    public ImageSource? VlcIcon { get; }
+
+    private string? _installedVlc;
+    private bool _vlcChecked;
+
+    /// <summary>The VLC installed in Windows, if the session's one look found one.</summary>
+    public string? InstalledVlc => _installedVlc;
+
+    /// <summary>The VLC "Usar VLC" would pick: the installed one, else the portable one, else nothing.</summary>
+    public string? AvailableVlc => _installedVlc ?? (_vlc?.IsInstalled == true ? _vlc.ExePath : null);
+
+    private bool IsPlayer(string? path)
+        => path is not null && _manifest.Player is { } p && PathUtil.Normalize(p).Equals(PathUtil.Normalize(path), StringComparison.OrdinalIgnoreCase);
+
+    public string UseVlcToolTip => AvailableVlc is { } vlc
+        ? (IsPlayer(vlc) ? "Já é o player" : _installedVlc is not null ? $"Abre os arquivos com o VLC instalado no Windows ({Path.GetDirectoryName(vlc)})"
+            : $"Abre os arquivos com o VLC portátil de {Path.GetDirectoryName(vlc)}{(_vlc?.InstalledVersion is { } v ? " (" + v + ")" : "")}")
+        : "Nenhum VLC encontrado nesta máquina — o cone ao lado baixa o portátil";
+
+    public string DownloadVlcToolTip => $"Baixar e usar o VLC portátil oficial (80 MB; fica em {_vlc?.Directory}, uns 140 MB, sem instalar nada no Windows)";
+
+    private bool _isVlcBusy;
+    public bool IsVlcBusy { get => _isVlcBusy; private set { if (SetProperty(ref _isVlcBusy, value)) NotifyVlc(); } }
+
+    private string _vlcStatusText = "";
+    /// <summary>Where the download is, shown next to the buttons while it runs.</summary>
+    public string VlcStatusText { get => _vlcStatusText; private set => SetProperty(ref _vlcStatusText, value); }
+
+    private bool _showVlcPrompt;
+    public bool ShowVlcPrompt { get => _showVlcPrompt; private set { if (SetProperty(ref _showVlcPrompt, value)) NotifyVlc(); } }
+
+    private string _vlcPromptText = "";
+    public string VlcPromptText { get => _vlcPromptText; private set => SetProperty(ref _vlcPromptText, value); }
+
+    private string _vlcPromptUseLabel = "";
+    public string VlcPromptUseLabel { get => _vlcPromptUseLabel; private set => SetProperty(ref _vlcPromptUseLabel, value); }
+
+    private string _vlcPromptDownloadLabel = "";
+    public string VlcPromptDownloadLabel { get => _vlcPromptDownloadLabel; private set => SetProperty(ref _vlcPromptDownloadLabel, value); }
+
+    private void NotifyVlc()
+    {
+        OnPropertyChanged(nameof(InstalledVlc));
+        OnPropertyChanged(nameof(AvailableVlc));
+        OnPropertyChanged(nameof(UseVlcToolTip));
+        OnPropertyChanged(nameof(DownloadVlcToolTip));
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>The session's one look for a VLC installed in Windows. Silent; nothing is written anywhere.</summary>
+    private void CheckInstalledVlc()
+    {
+        if (_vlcChecked || _vlc is null)
+            return;
+        _vlcChecked = true;
+        _installedVlc = VlcLocator.FindInstalled();
+        if (_installedVlc is not null)
+            _host.Log(LogLevel.Debug, $"VLC instalado no Windows: {_installedVlc}");
+        NotifyVlc();
+    }
+
     // ───── Commands ─────
 
     public ICommand SyncCommand { get; }
@@ -286,6 +389,11 @@ public sealed class LibraryTabViewModel : ObservableObject
     public ICommand ShowInFolderCommand { get; }
     public ICommand ChoosePlayerCommand { get; }
     public ICommand UseDefaultPlayerCommand { get; }
+    public ICommand UseVlcCommand { get; }
+    public ICommand DownloadVlcCommand { get; }
+    public ICommand VlcPromptUseCommand { get; }
+    public ICommand VlcPromptDownloadCommand { get; }
+    public ICommand VlcPromptCancelCommand { get; }
 
     // ───── Lifecycle ─────
 
@@ -297,6 +405,7 @@ public sealed class LibraryTabViewModel : ObservableObject
             _opened = true;
             _ = _sync.EnsureLoadedAsync();
         }
+        CheckInstalledVlc();
         // The check is one stat per known folder — cheap, but not for free on a sleeping disk, so not on every tab flick.
         if (!_manifest.AutoSync || _manifest.Roots.Count == 0 || DateTime.UtcNow - _lastAutoCheck < TimeSpan.FromSeconds(5))
             return;
@@ -430,6 +539,7 @@ public sealed class LibraryTabViewModel : ObservableObject
         var changes = new List<(LibraryRow? Old, LibraryRow New)>();
         foreach (var row in rows)
         {
+            row.Group = GroupFor(row);
             seen.Add(row.Path);
             if (_byPath.TryGetValue(row.Path, out var existing))
             {
@@ -474,6 +584,8 @@ public sealed class LibraryTabViewModel : ObservableObject
                 _byPath.Remove(row.Path);
             }
         }
+        if (gone.Count > 0)
+            PruneGroups();
         RefreshRoots();
         UpdateCounts();
         UpdateStatus();
@@ -486,6 +598,7 @@ public sealed class LibraryTabViewModel : ObservableObject
         foreach (var entry in entries)
         {
             var row = new LibraryRow(entry, RootOf(roots, entry.Path));
+            row.Group = GroupFor(row);
             if (_byPath.TryGetValue(entry.Path, out var existing))
                 Rows[Rows.IndexOf(existing)] = row;
             else
@@ -499,6 +612,31 @@ public sealed class LibraryTabViewModel : ObservableObject
     private static LibraryRoot? RootOf(IReadOnlyList<LibraryRoot> roots, string path)
         => roots.Where(r => PathUtil.IsUnder(path, r.Path)).OrderByDescending(r => r.Path.Length).FirstOrDefault();
 
+    // ───── Folder groups ─────
+
+    /// <summary>
+    /// The one header for the row's directory. A renamed root (or a directory that changed roots) gets a new
+    /// header, carrying the old one's flag. UI thread only, like everything that touches the rows.
+    /// </summary>
+    private FolderGroup GroupFor(LibraryRow row)
+    {
+        if (_groups.TryGetValue(row.Directory, out var group) && group.RootName == row.RootName && group.Folder == row.Folder)
+            return group;
+        var fresh = new FolderGroup(row.Directory, row.RootName, row.Folder);
+        if (group is not null)
+            fresh.IsExpanded = group.IsExpanded;
+        fresh.SetSearching(_searching);
+        _groups[row.Directory] = fresh;
+        return fresh;
+    }
+
+    private void PruneGroups()
+    {
+        var live = new HashSet<string>(Rows.Select(r => r.Directory), StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in _groups.Keys.Where(d => !live.Contains(d)).ToList())
+            _groups.Remove(directory);
+    }
+
     private bool Passes(LibraryRow row)
         => (SelectedRoot is not { Path: { } rootPath } || row.RootPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase))
            && (SelectedKind.Kind is not { } kind || row.Kind == kind)
@@ -506,6 +644,13 @@ public sealed class LibraryTabViewModel : ObservableObject
 
     private void RefreshView()
     {
+        var searching = !string.IsNullOrWhiteSpace(FilterText);
+        if (searching != _searching)
+        {
+            _searching = searching;
+            foreach (var group in _groups.Values)
+                group.SetSearching(searching);
+        }
         _view.Refresh();
         UpdateCounts();
     }
@@ -636,9 +781,72 @@ public sealed class LibraryTabViewModel : ObservableObject
         };
         if (dialog.ShowDialog(Application.Current?.MainWindow) != true || string.IsNullOrWhiteSpace(dialog.FileName))
             return;
-        _manifest.Update(m => m.Player = dialog.FileName);
+        SetPlayer(dialog.FileName);
+    }
+
+    private void SetPlayer(string? path)
+    {
+        _manifest.Update(m => m.Player = path);
         OnPropertyChanged(nameof(PlayerText));
         OnPropertyChanged(nameof(HasPlayer));
+        NotifyVlc();
+    }
+
+    /// <summary>The cone. A VLC already here (installed, or the portable one) gets the question first; none → straight to the download.</summary>
+    private void AskOrDownloadVlc()
+    {
+        if (_vlc is null || IsVlcBusy)
+            return;
+        CheckInstalledVlc();
+        if (_installedVlc is { } installed)
+        {
+            VlcPromptText = $"Já existe um VLC instalado no Windows ({Path.GetDirectoryName(installed)}). Usar esse, ou baixar o portátil (80 MB) mesmo assim?";
+            VlcPromptUseLabel = "Usar o instalado";
+            VlcPromptDownloadLabel = "Baixar mesmo assim";
+            ShowVlcPrompt = true;
+        }
+        else if (_vlc.IsInstalled)
+        {
+            VlcPromptText = $"O VLC portátil já está em {_vlc.Directory}{(_vlc.InstalledVersion is { } v ? " (" + v + ")" : "")}. Usar esse, ou baixar de novo?";
+            VlcPromptUseLabel = "Usar esse";
+            VlcPromptDownloadLabel = "Baixar de novo";
+            ShowVlcPrompt = true;
+        }
+        else
+        {
+            DownloadVlc();
+        }
+    }
+
+    /// <summary>The download runs on the pool; the status text next to the buttons shows where it is and the tab keeps working. Done → it is the player.</summary>
+    private async void DownloadVlc()
+    {
+        if (_vlc is null || IsVlcBusy)
+            return;
+        VlcStatusText = "";
+        IsVlcBusy = true;
+        try
+        {
+            var progress = new Progress<VlcProgress>(p => VlcStatusText = "VLC: " + p);
+            var version = await _vlc.InstallAsync(progress, _host.ShutdownToken);
+            _host.Log(LogLevel.Info, $"VLC {version} instalado em {_vlc.Directory}");
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            WarningText = "Não consegui baixar o VLC: " + ex.Message;
+            _host.Log(LogLevel.Warning, $"baixar o VLC: {ex.Message}");
+            return;
+        }
+        finally
+        {
+            IsVlcBusy = false;
+            VlcStatusText = "";
+        }
+        SetPlayer(_vlc.ExePath);
     }
 
     /// <summary>Runs on the UI thread. A bug here must not take the app down: an unhandled exception in a dispatcher callback is fatal.</summary>

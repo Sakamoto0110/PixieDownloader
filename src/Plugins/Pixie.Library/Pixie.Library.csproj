@@ -16,7 +16,7 @@
     <!-- Description is what the store ("Plugins oficiais") shows — release-plugin.ps1 copies it into plugins.json. -->
     <Version>1.1.0</Version>
     <AssemblyTitle>Library</AssemblyTitle>
-    <Description>Catálogo do que já está em disco: pastas nomeadas, busca por título/artista/arquivo, e abre no player que você escolher. O que o app baixa entra sozinho.</Description>
+    <Description>Catálogo do que já está em disco: pastas nomeadas que abrem e fecham, busca por título/artista/arquivo, e abre no player que você escolher — ou no VLC, que ela baixa pra você. O que o app baixa entra sozinho.</Description>
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
 
@@ -29,6 +29,9 @@
     <!-- Ogg/Opus, WAV, Matroska/WebM…, and counts the ID3 chapters a mix may carry. -->
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
     <None Include="THIRD-PARTY.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The VLC cone for the "Baixar o VLC" button: the store's `vlc` asset (vdr cp vlc), VideoLAN's own icon, -->
+    <!-- embedded and read as a manifest stream (Player/VlcIcon.cs) — no pack URI to resolve from a plugin context. -->
+    <EmbeddedResource Include="Assets\vlc.ico" />
   </ItemGroup>
 
   <!-- The tests drive the scanner, the manifest and the inbox (internal) directly. -->

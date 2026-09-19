@@ -43,6 +43,9 @@ internal sealed class ManifestData
     /// <summary>Extensions beyond the built-in audio and video ones, without the dot ("gif").</summary>
     public List<string> ExtraExtensions { get; set; } = [];
 
+    /// <summary>The tab lists the files under collapsible folder headers (off: one flat list in the chosen order).</summary>
+    public bool GroupByFolder { get; set; } = true;
+
     public DateTime? LastSync { get; set; }
 }
 

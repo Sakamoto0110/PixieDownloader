@@ -1,6 +1,9 @@
 using System.IO;
+using System.Net.Http;
+using System.Reflection;
 using System.Windows;
 using Pixie.Library.Catalog;
+using Pixie.Library.Player;
 using PixieDownloader.Sdk;
 using YtDlpCore;
 
@@ -21,6 +24,7 @@ public sealed class LibraryPlugin : IPixiePlugin, IUiContribution
     private LibraryManifest _manifest = null!;
     private LibrarySync _sync = null!;
     private LibraryTabViewModel _tab = null!;
+    private HttpClient? _http;
 
     public void Configure(IPluginHost host)
     {
@@ -28,7 +32,12 @@ public sealed class LibraryPlugin : IPixiePlugin, IUiContribution
         _store = new LibraryStore(host.DataDirectory);
         _manifest = LibraryManifest.Load(_store.ManifestPath, message => host.Log(LogLevel.Warning, message));
         _sync = new LibrarySync(_manifest, _store, TagReader.Read, (level, message, ex) => host.Log(level, message, ex), host.ShutdownToken);
-        _tab = new LibraryTabViewModel(_manifest, _sync, host);
+        // The VLC download: its own client (the host's is not part of the SDK), into tools\ next to the exe —
+        // the folder the app keeps yt-dlp and ffmpeg in, computed the way BinaryManager computes it.
+        _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd($"PixieDownloader-Library/{typeof(LibraryPlugin).Assembly.GetName().Version?.ToString(3) ?? "dev"}");
+        var vlc = new VlcInstaller(_http, Path.Combine(AppContext.BaseDirectory, "tools"), (level, message) => host.Log(level, message));
+        _tab = new LibraryTabViewModel(_manifest, _sync, host, vlc);
         host.DownloadCompleted += OnDownloadCompleted;
         host.Log(LogLevel.Debug, $"{_manifest.Roots.Count} pasta(s) no catálogo, estado {_manifest.Status}");
     }

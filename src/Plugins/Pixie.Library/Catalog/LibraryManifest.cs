@@ -78,6 +78,8 @@ internal sealed class LibraryManifest
 
     public string? Player { get { lock (_lock) return _data.Player; } }
 
+    public bool GroupByFolder { get { lock (_lock) return _data.GroupByFolder; } }
+
     public IReadOnlyList<LibraryRoot> Roots { get { lock (_lock) return _data.Roots.ToArray(); } }
 
     public IReadOnlyList<string> ExtraExtensions { get { lock (_lock) return _data.ExtraExtensions.ToArray(); } }

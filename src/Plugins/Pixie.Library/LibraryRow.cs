@@ -21,7 +21,8 @@ public sealed class LibraryRow
         Title = entry.Title ?? System.IO.Path.GetFileNameWithoutExtension(entry.Path);
         RootPath = root is null ? "" : PathUtil.Normalize(root.Path);
         RootName = root?.Name ?? "";
-        Folder = root is null ? (System.IO.Path.GetDirectoryName(entry.Path) ?? "") : PathUtil.Relative(System.IO.Path.GetDirectoryName(entry.Path) ?? RootPath, RootPath);
+        Directory = PathUtil.Normalize(System.IO.Path.GetDirectoryName(entry.Path) ?? RootPath);
+        Folder = root is null ? Directory : PathUtil.Relative(Directory, RootPath);
         var byline = string.Join(" · ", new[] { entry.Artist, entry.Album }.Where(s => !string.IsNullOrEmpty(s)));
         Subtitle = byline.Length > 0 ? byline : Folder.Length > 0 ? Folder : RootName;
         Duration = entry.Duration ?? 0;
@@ -48,7 +49,18 @@ public sealed class LibraryRow
     public string Subtitle { get; }
     public string RootPath { get; }
     public string RootName { get; }
+
+    /// <summary>The file's directory, normalized — what the rows are grouped by.</summary>
+    public string Directory { get; }
+
+    /// <summary>The directory relative to the root ("" for the root itself); the whole path when no root contains the file.</summary>
     public string Folder { get; }
+
+    /// <summary>
+    /// The folder header this row sits under when the list is grouped — one shared instance per directory,
+    /// handed out by the view model as the row is folded in (the row itself is built on a pool thread).
+    /// </summary>
+    public FolderGroup Group { get; internal set; } = null!;
     public double Duration { get; }
     public string DurationText { get; }
     public long Size { get; }
