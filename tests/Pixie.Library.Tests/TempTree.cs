@@ -39,6 +39,23 @@ public sealed class TempTree : IDisposable
 
     public string Full(string relative) => Path.Combine(Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
+    /// <summary>
+    /// Waits (up to a few seconds) until the folder's mtime differs from <paramref name="previous"/>. NTFS publishes
+    /// a directory's new timestamp to its parent lazily, so a scan started right after a rename or a create can
+    /// still read the old stamp and reuse the folder — seen on the GitHub runner, never on a desktop. Listing the
+    /// folder opens and closes a handle on it, which is what makes the stamp current.
+    /// </summary>
+    public void WaitForFolderChange(DateTime previous, string relative = "")
+    {
+        var dir = relative.Length == 0 ? Root : Full(relative);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (Directory.GetLastWriteTimeUtc(dir) == previous && DateTime.UtcNow < deadline)
+        {
+            _ = Directory.EnumerateFileSystemEntries(dir).FirstOrDefault();
+            Thread.Sleep(5);
+        }
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(Root, recursive: true); } catch { /* best effort */ }

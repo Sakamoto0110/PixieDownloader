@@ -72,6 +72,7 @@ public sealed class LibraryScannerTests : IDisposable
 
         var c = _tree.Mp3("sub/c.mp3");
         File.Delete(b);
+        _tree.WaitForFolderChange(first.Index.Directories.Single(d => d.Path.EndsWith("sub")).Modified, "sub");
         Assert.True(LibraryScanner.DirectoriesChanged(first.Index, [Root]));
 
         var second = Scan(first.Index);
@@ -91,6 +92,7 @@ public sealed class LibraryScannerTests : IDisposable
 
         var renamed = _tree.Full("renamed.mp3");
         File.Move(a, renamed);
+        _tree.WaitForFolderChange(first.Index.Directories.Single().Modified);   // the stamp NTFS shows for the folder lags the rename
         var second = Scan(first.Index);
 
         Assert.Equal([renamed], _tags.Calls);
