@@ -86,7 +86,7 @@ Step '1/3 build (Release) + testes'
 Run 'dotnet restore' { dotnet restore $tests --nologo -v q }
 Run 'dotnet build'   { dotnet build $tests -c Release --no-restore --nologo -v q }
 if ($SkipTests) { Write-Host 'testes pulados (-SkipTests)' }
-else { Run 'dotnet test' { dotnet test $tests -c Release --no-build --nologo -v q } }
+else { Run 'dotnet test' { dotnet test $tests -c Release --no-build --nologo -v q --logger 'console;verbosity=normal' } }   # the logger: a failure on the runner must say which assertion, not only which test
 if (-not (Test-Path (Join-Path $out $pl.Dll))) { throw "O build não deixou $($pl.Dll) em $out" }
 
 # ───── 2. zip: uma pasta <id>\ pra extrair direto em plugins\ ao lado do .exe; sem .pdb ─────
