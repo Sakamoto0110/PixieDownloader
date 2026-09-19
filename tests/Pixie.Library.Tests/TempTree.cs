@@ -56,6 +56,25 @@ public sealed class TempTree : IDisposable
         }
     }
 
+    /// <summary>
+    /// Whether this file system stamps a folder when a file inside it is renamed. NTFS on a desktop does; the
+    /// GitHub runner's temp drive does not (create and delete stamp it, rename never did in 5 s), and there the
+    /// incremental scan cannot see a rename — the full scan is the catch-up. A test about renames asks first.
+    /// </summary>
+    public bool RenameStampsTheFolder()
+    {
+        var probe = Junk(".probe-" + Guid.NewGuid().ToString("N") + ".tmp");
+        _ = Directory.EnumerateFileSystemEntries(Root).FirstOrDefault();
+        var before = Directory.GetLastWriteTimeUtc(Root);
+        Thread.Sleep(15);
+        var renamed = probe + ".renamed";
+        File.Move(probe, renamed);
+        WaitForFolderChange(before);
+        var changed = Directory.GetLastWriteTimeUtc(Root) != before;
+        File.Delete(renamed);
+        return changed;
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(Root, recursive: true); } catch { /* best effort */ }
