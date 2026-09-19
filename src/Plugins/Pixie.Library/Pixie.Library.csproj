@@ -14,7 +14,7 @@
     <!-- No plugin.json: the host reads id (folder), name, version, apiVersion and the entry class from the -->
     <!-- assembly's metadata. So this is the plugin's version, AssemblyTitle is what the Plugins tab shows, and -->
     <!-- Description is what the store ("Plugins oficiais") shows — release-plugin.ps1 copies it into plugins.json. -->
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <AssemblyTitle>Library</AssemblyTitle>
     <Description>Catálogo do que já está em disco: pastas nomeadas, busca por título/artista/arquivo, e abre no player que você escolher. O que o app baixa entra sozinho.</Description>
     <EnableDynamicLoading>true</EnableDynamicLoading>
