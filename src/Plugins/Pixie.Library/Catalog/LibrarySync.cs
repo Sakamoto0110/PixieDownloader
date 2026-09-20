@@ -16,13 +16,18 @@ internal enum SyncMode
 /// A request while a run is going on does not start another — it is queued, and the run goes again when it
 /// finishes (with the stronger of the two modes). A flag flip during a scan (a download landing) makes the
 /// compare-and-swap at the end fail, and the run goes again from the index it just wrote, incrementally.
-/// Every event here is raised on the pool thread; the view model marshals.
+/// Each run derives the <see cref="ScanPlan"/> from the manifest as it is then; a tree made with other
+/// extensions or scanner rules makes the run a full one (a source that came or went needs no more than the
+/// incremental walk: new trees are listed whole, trees without a source are dropped). Every event here is
+/// raised on the pool thread; the view model marshals.
 /// </summary>
 internal sealed class LibrarySync
 {
     private readonly LibraryManifest _manifest;
     private readonly LibraryStore _store;
+    private readonly Func<ScanPlan> _plan;
     private readonly Func<string, TagInfo?> _readTags;
+    private readonly Func<string, FileIdentityInfo> _identity;
     private readonly Action<LogLevel, string, Exception?> _log;
     private readonly CancellationToken _shutdown;
     private readonly object _lock = new();
@@ -32,15 +37,21 @@ internal sealed class LibrarySync
     private SyncMode? _queued;
     private IndexData? _index;
 
-    public LibrarySync(LibraryManifest manifest, LibraryStore store, Func<string, TagInfo?> readTags,
-        Action<LogLevel, string, Exception?> log, CancellationToken shutdown)
+    public LibrarySync(LibraryManifest manifest, LibraryStore store, Func<ScanPlan> plan, Func<string, TagInfo?> readTags,
+        Func<string, FileIdentityInfo> identity, Action<LogLevel, string, Exception?> log, CancellationToken shutdown)
     {
         _manifest = manifest;
         _store = store;
+        _plan = plan;
         _readTags = readTags;
+        _identity = identity;
         _log = log;
         _shutdown = shutdown;
     }
+
+    /// <summary>The identity delegate the app uses: one handle per listed file (see <see cref="FileIdentity"/>).</summary>
+    public static FileIdentityInfo WindowsIdentity(string path)
+        => FileIdentity.TryGet(path, isFolder: false, out var serial, out var id) ? new FileIdentityInfo(serial, id) : FileIdentityInfo.None;
 
     /// <summary>The index as the plugin knows it: the file as last read, then each scan's result. Null until loaded.</summary>
     public IndexData? Index { get { lock (_lock) return _index; } }
@@ -127,11 +138,16 @@ internal sealed class LibrarySync
     private void RunOnce(SyncMode mode)
     {
         var index = EnsureLoaded();
-        var roots = _manifest.Roots;
+        if (_manifest.ReadOnly)
+            return;   // a manifest from a newer plugin: nothing is written, so nothing is scanned
+        var plan = _plan();
         var status = _manifest.Status;
-        var full = mode == SyncMode.Full || status == SyncStatus.Failed;
-        if (!full && status == SyncStatus.Synced && !LibraryScanner.DirectoriesChanged(index, roots))
+        var rulesChanged = LibraryScanner.RulesChanged(index, plan);
+        var full = mode == SyncMode.Full || status == SyncStatus.Failed || rulesChanged || index.ScannedAt is null;   // a tree that never came from a scan has nothing to reuse
+        if (!full && status == SyncStatus.Synced && !LibraryScanner.DirectoriesChanged(index, plan))
             return;
+        if (rulesChanged)
+            _log(LogLevel.Debug, "as extensões ou as regras da varredura mudaram: varredura completa", null);
 
         while (true)
         {
@@ -143,7 +159,7 @@ internal sealed class LibrarySync
             {
                 var blocks = _store.Inbox.ReadAll();
                 var priority = blocks.SelectMany(b => b.Files).ToArray();
-                var request = new ScanRequest(roots, index, full, _manifest.Extensions, priority, _readTags);
+                var request = new ScanRequest(plan, index, full, priority, _readTags, _identity);
                 result = LibraryScanner.Scan(request, new ImmediateProgress(p => Progress?.Invoke(p)), _shutdown);
                 _store.WriteIndex(result.Index);
                 lock (_lock)
@@ -160,10 +176,10 @@ internal sealed class LibrarySync
             if (_manifest.TryMarkSynced(generation, DateTime.UtcNow))
                 return;
 
-            // Something flipped the flag while we scanned (a download landed): once more, from where we are.
+            // Something flipped the flag while we scanned (a download, an import): once more, from where we are.
             index = result.Index;
-            roots = _manifest.Roots;
-            full = false;
+            plan = _plan();
+            full = LibraryScanner.RulesChanged(index, plan);
         }
     }
 

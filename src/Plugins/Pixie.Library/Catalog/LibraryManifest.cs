@@ -4,117 +4,249 @@ using System.Text.Json;
 namespace Pixie.Library.Catalog;
 
 /// <summary>
-/// The manifest file and the state machine around its flag. Every change goes to disk at once, by
-/// write-temp-and-rename, so a crash leaves the previous manifest, never a broken one. The flag is the
-/// contract between the sync and everything else: a download or a folder change flips it to <c>pending</c>
-/// (<see cref="MarkPending"/>, which also bumps <see cref="Generation"/>), and the sync only writes
-/// <c>synced</c> if the generation is still the one it read when it started (<see cref="TryMarkSynced"/>) —
-/// otherwise something arrived mid-scan and the flag stays pending for the next run.
+/// An immutable view of the manifest for the code that only reads it (the scan plan, the reconciler, the
+/// operations' checks): items, groups and memberships cloned, the conflicted ids computed, the options copied.
+/// Taken under the manifest's lock, so it is one consistent state.
+/// </summary>
+internal sealed class ManifestSnapshot
+{
+    internal ManifestSnapshot(ManifestData data, IReadOnlySet<string> conflictedIds, bool readOnly)
+    {
+        Status = data.Status;
+        LastSync = data.LastSync;
+        StorageRoot = data.StorageRoot;
+        Player = data.Player;
+        AutoAddRoots = data.AutoAddRoots;
+        AutoSync = data.AutoSync;
+        GroupByFolder = data.GroupByFolder;
+        ExtraExtensions = data.ExtraExtensions.ToArray();
+        LegacyV1 = data.LegacyV1;
+        Items = data.Items.Select(i => i.Clone()).ToArray();
+        Groups = data.Groups.Select(g => g.Clone()).ToArray();
+        Memberships = data.Memberships.Select(m => m.Clone()).ToArray();
+        ConflictedIds = conflictedIds;
+        ReadOnly = readOnly;
+        var items = new Dictionary<string, ItemData>(StringComparer.Ordinal);
+        foreach (var item in Items)
+        {
+            if (!string.IsNullOrEmpty(item.Id) && !conflictedIds.Contains(item.Id))
+                items[item.Id] = item;
+        }
+        var groups = new Dictionary<string, GroupData>(StringComparer.Ordinal);
+        foreach (var group in Groups)
+        {
+            if (!string.IsNullOrEmpty(group.Id) && !conflictedIds.Contains(group.Id))
+                groups[group.Id] = group;
+        }
+        _items = items;
+        _groups = groups;
+    }
+
+    private readonly Dictionary<string, ItemData> _items;
+    private readonly Dictionary<string, GroupData> _groups;
+
+    public SyncStatus Status { get; }
+    public DateTime? LastSync { get; }
+    public string? StorageRoot { get; }
+    public string? Player { get; }
+    public bool AutoAddRoots { get; }
+    public bool AutoSync { get; }
+    public bool GroupByFolder { get; }
+    public IReadOnlyList<string> ExtraExtensions { get; }
+    public LegacyV1Data? LegacyV1 { get; }
+    public IReadOnlyList<ItemData> Items { get; }
+    public IReadOnlyList<GroupData> Groups { get; }
+    public IReadOnlyList<MembershipData> Memberships { get; }
+
+    /// <summary>Ids that appear on more than one item or group: none of them resolves until a person sorts it out.</summary>
+    public IReadOnlySet<string> ConflictedIds { get; }
+
+    public bool ReadOnly { get; }
+
+    /// <summary>The items the scanner observes on their own, in manifest order.</summary>
+    public IEnumerable<ItemData> Sources => Items.Where(i => i.IsSource && !ConflictedIds.Contains(i.Id));
+
+    /// <summary>The one item with this id, or null when there is none — or more than one.</summary>
+    public ItemData? FindItem(string? id) => id is not null && _items.TryGetValue(id, out var item) ? item : null;
+
+    public GroupData? FindGroup(string? id) => id is not null && _groups.TryGetValue(id, out var group) ? group : null;
+
+    /// <summary>The item whose locator points at this path, by identity of the path.</summary>
+    public ItemData? FindItemByPath(string path)
+        => Items.FirstOrDefault(i => !ConflictedIds.Contains(i.Id) && PathUtil.TryNormalizeAbsolute(i.Locator.LastKnownPath, out var p, out _) && PathUtil.IsSamePath(p, path));
+}
+
+/// <summary>
+/// <c>manifest.v2.json</c> on disk, with its rules: every write goes through temp + rename after keeping the
+/// previous file as <c>.bak</c>; an unreadable file is set aside as <c>.bad</c> and the <c>.bak</c> is tried before
+/// starting empty; a file from a newer plugin is loaded read-only; a file of an older schema (the shape of the
+/// unpublished 2.0 branch) is set aside and the 1.x manifest migrated again; a <c>syncing</c> found on disk
+/// means the previous run died and becomes <c>failed</c>. The first load with only the 1.x <c>manifest.json</c>
+/// around migrates it — and never writes it back, which is what keeps a downgrade safe. The in-memory
+/// <see cref="Generation"/> is the sync runner's compare-and-swap token: a download landing mid-scan makes
+/// the run go again.
 /// </summary>
 internal sealed class LibraryManifest
 {
     private readonly object _lock = new();
     private readonly string _path;
+    private readonly string _legacyPath;
+    private readonly string _musicFolder;
     private ManifestData _data;
+    private HashSet<string> _conflicted;
     private int _generation;
 
-    private LibraryManifest(string path, ManifestData data)
+    private LibraryManifest(string path, string legacyPath, string musicFolder, ManifestData data, bool readOnly)
     {
         _path = path;
+        _legacyPath = legacyPath;
+        _musicFolder = musicFolder;
         _data = data;
+        ReadOnly = readOnly;
+        _conflicted = ConflictedIdsOf(data);
     }
 
     /// <summary>
-    /// Reads <paramref name="path"/>. Missing → a fresh manifest in <c>pending</c>, written right away (the first
-    /// opening must not show an empty catalogue as if that were the truth). Unreadable → set aside as
-    /// <c>manifest.json.bad</c> and started over. <c>syncing</c> on disk means the previous run died mid-way:
-    /// it becomes <c>failed</c>, which makes the next run a full one.
+    /// Reads <c>manifest.v2.json</c> in <paramref name="dataDirectory"/>, migrating from <c>manifest.json</c> when
+    /// there is only that. <paramref name="musicFolder"/> is the system's Music folder — the storage root when
+    /// none is configured, and the 1.x root the migration does not duplicate.
     /// </summary>
-    public static LibraryManifest Load(string path, Action<string>? warn = null)
+    public static LibraryManifest Load(string dataDirectory, string musicFolder, Action<string>? warn = null)
     {
+        var path = System.IO.Path.Combine(dataDirectory, "manifest.v2.json");
+        var legacyPath = System.IO.Path.Combine(dataDirectory, "manifest.json");
         ManifestData? data = null;
+        var readOnly = false;
+        var fresh = false;
+        var restored = false;
+
         if (File.Exists(path))
         {
-            try
+            data = TryRead(path, warn);
+            if (data is null)
             {
-                data = JsonSerializer.Deserialize<ManifestData>(File.ReadAllText(path), LibraryJson.Manifest);
-                if (data is null)
-                    throw new JsonException("vazio");
-            }
-            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
-            {
-                warn?.Invoke($"manifest.json ilegível ({ex.Message}); guardado como manifest.json.bad e recriado");
                 try { File.Move(path, path + ".bad", overwrite: true); } catch { /* the rewrite below replaces it anyway */ }
-                data = null;
+                if (File.Exists(path + ".bak") && TryRead(path + ".bak", warn) is { } backup)
+                {
+                    warn?.Invoke("manifest.v2.json ilegível; guardado como manifest.v2.json.bad e restaurado do .bak");
+                    data = backup;
+                    restored = true;   // written back below: with only the .bak on disk, the next start would migrate the 1.x file again
+                }
+                else
+                {
+                    warn?.Invoke("manifest.v2.json ilegível e sem .bak utilizável; guardado como manifest.v2.json.bad");
+                }
+            }
+            else if (data.SchemaVersion > ManifestData.CurrentSchema)
+            {
+                warn?.Invoke($"manifest.v2.json é de uma versão mais nova do plugin (schema {data.SchemaVersion}); aberto só pra leitura — atualize o plugin");
+                readOnly = true;
             }
         }
 
-        var fresh = data is null;
-        data ??= new ManifestData();
-        data.Roots = data.Roots.Where(r => !string.IsNullOrWhiteSpace(r.Path)).ToList();
-        data.ExtraExtensions = data.ExtraExtensions.Where(e => !string.IsNullOrWhiteSpace(e)).ToList();
+        if (data is null)
+        {
+            fresh = true;
+            var legacy = File.Exists(legacyPath) ? LegacyMigration.TryReadV1(legacyPath, warn) : null;
+            if (legacy is not null)
+            {
+                data = LegacyMigration.Migrate(legacy, DateTime.UtcNow, musicFolder);
+                warn?.Invoke($"manifest.json (1.x) migrado para manifest.v2.json: {data.Items.Count(i => i.IsSource)} pasta(s) viraram fontes; o arquivo antigo fica como está");
+            }
+            else
+            {
+                data = new ManifestData();
+            }
+        }
+
+        data.Items ??= [];
+        data.Groups ??= [];
+        data.Memberships ??= [];
+        data.ExtraExtensions = (data.ExtraExtensions ?? []).Where(e => !string.IsNullOrWhiteSpace(e)).ToList();
+        foreach (var item in data.Items)
+            item.Locator ??= new LocatorData();
         var interrupted = data.Status == SyncStatus.Syncing;
         if (interrupted)
             data.Status = SyncStatus.Failed;
 
-        var manifest = new LibraryManifest(path, data);
-        if (fresh || interrupted)
+        var manifest = new LibraryManifest(path, legacyPath, musicFolder, data, readOnly);
+        if ((fresh || interrupted || restored) && !readOnly)
             manifest.Save();
         return manifest;
     }
 
-    public string Path => _path;
+    private static ManifestData? TryRead(string path, Action<string>? warn)
+    {
+        try
+        {
+            var data = JsonSerializer.Deserialize<ManifestData>(File.ReadAllText(path), LibraryJson.Manifest);
+            if (data is null)
+                throw new JsonException("vazio");
+            if (data.SchemaVersion < ManifestData.CurrentSchema)
+                throw new JsonException($"schema {data.SchemaVersion} (a forma antiga do 2.0, nunca publicada); este plugin escreve o {ManifestData.CurrentSchema}");
+            return data;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            warn?.Invoke($"{System.IO.Path.GetFileName(path)}: {ex.Message}");
+            return null;
+        }
+    }
 
-    /// <summary>Bumped by every <see cref="MarkPending"/>; the sync's compare-and-swap token.</summary>
+    public string FilePath => _path;
+    public string LegacyPath => _legacyPath;
+
+    /// <summary>The system's Music folder as this manifest was loaded with: the storage root when none is configured.</summary>
+    public string MusicFolder => _musicFolder;
+
+    /// <summary>A file from a newer plugin: readable, never written.</summary>
+    public bool ReadOnly { get; }
+
+    /// <summary>The compare-and-swap token of the sync runner (in memory only).</summary>
     public int Generation { get { lock (_lock) return _generation; } }
 
     public SyncStatus Status { get { lock (_lock) return _data.Status; } }
-
     public DateTime? LastSync { get { lock (_lock) return _data.LastSync; } }
-
     public bool AutoAddRoots { get { lock (_lock) return _data.AutoAddRoots; } }
-
     public bool AutoSync { get { lock (_lock) return _data.AutoSync; } }
-
     public string? Player { get { lock (_lock) return _data.Player; } }
-
     public bool GroupByFolder { get { lock (_lock) return _data.GroupByFolder; } }
-
-    public IReadOnlyList<LibraryRoot> Roots { get { lock (_lock) return _data.Roots.ToArray(); } }
-
     public IReadOnlyList<string> ExtraExtensions { get { lock (_lock) return _data.ExtraExtensions.ToArray(); } }
 
-    /// <summary>The scan's extension set: built-ins plus the extras.</summary>
+    /// <summary>The storage root as configured, or the Music folder: normalized.</summary>
+    public string StorageRoot { get { lock (_lock) return ScanPlan.StorageRootOf(_data.StorageRoot, _musicFolder); } }
+
+    /// <summary>The full set for a scan: built-ins plus the extras, each as ".ext".</summary>
     public IReadOnlySet<string> Extensions { get { lock (_lock) return FileKinds.All(_data.ExtraExtensions); } }
 
-    /// <summary>Edits anything but the flag (folders, player, options) and saves.</summary>
+    public IReadOnlySet<string> ConflictedIds { get { lock (_lock) return _conflicted.ToHashSet(StringComparer.Ordinal); } }
+
+    public ManifestSnapshot Snapshot()
+    {
+        lock (_lock)
+            return new ManifestSnapshot(_data, _conflicted.ToHashSet(StringComparer.Ordinal), ReadOnly);
+    }
+
+    /// <summary>Edits anything but the flag (items, groups, options) and saves. Refused on a read-only manifest.</summary>
     public void Update(Action<ManifestData> change)
     {
         lock (_lock)
         {
+            EnsureWritable();
             change(_data);
+            _conflicted = ConflictedIdsOf(_data);
             Save();
         }
     }
 
-    /// <summary>The root that contains <paramref name="filePath"/> — the deepest one, when roots nest.</summary>
-    public LibraryRoot? RootOf(string filePath)
-    {
-        lock (_lock)
-            return _data.Roots
-                .Where(r => PathUtil.IsUnder(filePath, r.Path))
-                .OrderByDescending(r => r.Path.Length)
-                .FirstOrDefault();
-    }
-
-    /// <summary>Something changed (a download, a folder): the index is behind. Bumps the generation.</summary>
+    /// <summary>Something changed (a download, an import, a folder): the index is behind. Bumps the generation.</summary>
     public void MarkPending()
     {
         lock (_lock)
         {
             _generation++;
             _data.Status = SyncStatus.Pending;
-            Save();
+            SaveIfWritable();
         }
     }
 
@@ -124,7 +256,7 @@ internal sealed class LibraryManifest
         lock (_lock)
         {
             _data.Status = SyncStatus.Syncing;
-            Save();
+            SaveIfWritable();
         }
     }
 
@@ -140,7 +272,7 @@ internal sealed class LibraryManifest
                 return false;
             _data.Status = SyncStatus.Synced;
             _data.LastSync = when;
-            Save();
+            SaveIfWritable();
             return true;
         }
     }
@@ -151,41 +283,48 @@ internal sealed class LibraryManifest
         lock (_lock)
         {
             _data.Status = SyncStatus.Failed;
-            Save();
+            SaveIfWritable();
         }
     }
 
+    private void EnsureWritable()
+    {
+        if (ReadOnly)
+            throw new InvalidOperationException("o manifesto é de uma versão mais nova do plugin e está aberto só pra leitura");
+    }
+
+    private void SaveIfWritable()
+    {
+        if (!ReadOnly)
+            Save();
+    }
+
     private void Save()
-        => AtomicFile.Write(_path, JsonSerializer.Serialize(_data, LibraryJson.Manifest));
-}
-
-internal static class PathUtil
-{
-    private static readonly char[] Separators = [System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar];
-
-    /// <summary>Full path without a trailing separator, so the same folder always compares equal.</summary>
-    public static string Normalize(string path)
     {
-        var full = System.IO.Path.GetFullPath(path);
-        var trimmed = full.TrimEnd(Separators);
-        return trimmed.Length == 0 || (trimmed.Length == 2 && trimmed[1] == ':') ? full : trimmed;   // keep "C:\" whole
+        try
+        {
+            if (File.Exists(_path))
+                File.Copy(_path, _path + ".bak", overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // no backup this time; the write below is still atomic
+        }
+        AtomicFile.Write(_path, JsonSerializer.Serialize(_data, LibraryJson.Manifest));
     }
 
-    /// <summary><paramref name="path"/> is <paramref name="directory"/> itself or somewhere below it.</summary>
-    public static bool IsUnder(string path, string directory)
+    /// <summary>An id used by more than one item or group — items and groups share the id space, so a collision across them counts too.</summary>
+    private static HashSet<string> ConflictedIdsOf(ManifestData data)
     {
-        var dir = Normalize(directory);
-        var full = Normalize(path);
-        if (full.Equals(dir, StringComparison.OrdinalIgnoreCase))
-            return true;
-        var prefix = dir.EndsWith(System.IO.Path.DirectorySeparatorChar) ? dir : dir + System.IO.Path.DirectorySeparatorChar;
-        return full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>The path of <paramref name="path"/> relative to <paramref name="directory"/>, "" when it is the directory itself.</summary>
-    public static string Relative(string path, string directory)
-    {
-        var rel = System.IO.Path.GetRelativePath(Normalize(directory), Normalize(path));
-        return rel == "." ? "" : rel;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var conflicted = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var id in data.Items.Select(i => i.Id).Concat(data.Groups.Select(g => g.Id)))
+        {
+            if (string.IsNullOrEmpty(id))
+                continue;
+            if (!seen.Add(id))
+                conflicted.Add(id);
+        }
+        return conflicted;
     }
 }
