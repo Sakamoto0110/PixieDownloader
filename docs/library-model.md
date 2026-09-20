@@ -58,7 +58,7 @@ construídas quando uma operação precisa e nunca gravadas.
   (caminho onde foi visto pela última vez + `volumeSerial`/`fileId` NTFS + tamanho/mtime de arquivo). Com
   `source` é uma **fonte** (o "root" da 1.x: uma pasta andada ou um arquivo stat'ado por conta própria; `name`
   é o que o chip mostra). Sem `source`, existe porque um grupo o nomeia. **Um item existe se e só se tem
-  estado lógico**: nasce no primeiro Adicionar a / arrastar pra grupo (`EnsureItem`) ou no Adicionar
+  estado lógico**: nasce no primeiro Adicionar a (`EnsureItem`) ou no Adicionar
   pasta/arquivo; some com a última membership quando não é fonte. Um arquivo que o scanner descobriu e nada
   aponta vive só no Index. Uma fonte que também entra num grupo é o **mesmo** id.
 - **Grupo**: `{id, name, parentGroupId?}` — organização só do catálogo, nunca uma pasta. Árvore: no máximo um
@@ -197,7 +197,8 @@ Toda operação recusa num manifesto read-only. Nenhuma apaga arquivo.
   arquivos; nos grupos: subgrupos, pastas, arquivos, sumidos).
 - A aba: `ListBox` `Extended` (multi-select), duas `DataTemplate`s, menu de contexto montado pra linha sob o
   mouse, drag/drop (linhas → grupo = membership; grupo → grupo ou "Tudo" = muda o pai; pasta física não
-  recebe drop), `Adicionar ▾` no cabeçalho, nomes pela faixa inline, Opções com a seção da storage root. O
+  recebe drop) — **desligado** em `LibraryView.DragAndDropEnabled`, o menu de contexto faz o mesmo —,
+  `Adicionar ▾` no cabeçalho, nomes pela faixa inline, Opções com a seção da storage root. O
   resto — chips, busca, Tipo, Ordem, rodapé, status, avisos, Opções, VLC — é a 1.1 (`a293192`).
 
 ## 10. Caminhos: canonicalização e contenção (invariante)

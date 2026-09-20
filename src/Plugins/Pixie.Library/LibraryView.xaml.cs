@@ -146,8 +146,19 @@ public partial class LibraryView : UserControl
 
     // ───── Drag and drop: rows onto a group ─────
 
+    /// <summary>
+    /// The switch for drag and drop, off since 2026-09-20 because the owner asked for it: aiming a dragged
+    /// selection at a group, in a list that scrolls and rebuilds itself under the cursor, is easy to get wrong
+    /// in a way that writes to the manifest. "Adicionar a" in the context menu does the same thing and has to
+    /// be aimed at nothing. Nothing below was removed — turning it back on is this field, and the list stops
+    /// taking a drop with it (<c>AllowDrop</c> in the XAML reads this).
+    /// </summary>
+    public static readonly bool DragAndDropEnabled = false;
+
     private void OnListMouseDown(object sender, MouseButtonEventArgs e)
     {
+        if (!DragAndDropEnabled)
+            return;
         _dragStart = e.GetPosition(FileList);
         _dragRow = e.OriginalSource is DependencyObject source && !IsInteractive(source) ? RowAt(source) : null;
     }
@@ -188,6 +199,8 @@ public partial class LibraryView : UserControl
     private DragDropEffects DropEffect(DragEventArgs e, out LibraryRow? target)
     {
         target = null;
+        if (!DragAndDropEnabled)
+            return DragDropEffects.None;
         if (Vm is not { } vm || e.Data.GetData(DragFormat) is not List<LibraryRow> rows || rows.Count == 0)
             return DragDropEffects.None;
         var point = e.GetPosition(FileList);

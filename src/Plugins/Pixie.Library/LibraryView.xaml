@@ -431,9 +431,10 @@
 
                     <!-- The single list, virtualised over what is open: containers and files, each the row its template
                          makes. Selection is the list box's (several at once); the context menu is built for the row
-                         under the mouse; a drag of the selection can land on a group. -->
+                         under the mouse; a drag of the selection would land on a group, and is off for now
+                         (LibraryView.DragAndDropEnabled). -->
                     <ListBox x:Name="FileList" ItemsSource="{Binding Rows}" ItemTemplateSelector="{StaticResource RowTemplates}"
-                             SelectionMode="Extended" AllowDrop="True"
+                             SelectionMode="Extended" AllowDrop="{x:Static local:LibraryView.DragAndDropEnabled}"
                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              SelectionChanged="OnSelectionChanged" ContextMenuOpening="OnContextMenuOpening"
