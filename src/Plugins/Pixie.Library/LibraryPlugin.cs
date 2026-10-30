@@ -1,6 +1,5 @@
 using System.IO;
 using System.Net.Http;
-using System.Reflection;
 using System.Windows;
 using Pixie.Library.Catalog;
 using Pixie.Library.Player;
@@ -10,36 +9,52 @@ using YtDlpCore;
 namespace Pixie.Library;
 
 /// <summary>
-/// Module 2 of the roadmap — Library, the catalogue of what is already on disk. Named folders point at real
-/// ones; an index under <c>data/library/</c> remembers every audio/video file beneath them with the tags read
-/// once; the "Biblioteca" tab searches and sorts it and opens a file in the player the user chose (or whatever
-/// Windows would). Every delivered download joins the catalogue by itself: its output folder becomes a root if
-/// none contains it yet (unless the user turned that off), a block goes to the inbox, the flag flips to
-/// pending and an incremental sync runs. No player of its own, no knowledge of any other plugin.
+/// Module 2 of the roadmap — Library, the catalogue of what is already on disk: the storage root (the Music
+/// folder unless the person chose another) and the folders and files added as sources are scanned into an
+/// index tree; the manifest keeps what the disk does not know — the sources, the groups, which items belong
+/// to which group; a reconciler joins the two with the file system into what the "Biblioteca" tab shows.
+/// Every delivered download joins the catalogue by itself: under a source it is indexed; outside every source
+/// its output folder becomes a source (unless the person turned that off). No player of its own (opens in the
+/// player chosen, or the VLC it can fetch), no knowledge of any other plugin.
 /// </summary>
 public sealed class LibraryPlugin : IPixiePlugin, IUiContribution
 {
     private IPluginHost _host = null!;
-    private LibraryStore _store = null!;
-    private LibraryManifest _manifest = null!;
-    private LibrarySync _sync = null!;
+    private LibraryService _service = null!;
     private LibraryTabViewModel _tab = null!;
     private HttpClient? _http;
 
     public void Configure(IPluginHost host)
     {
         _host = host;
-        _store = new LibraryStore(host.DataDirectory);
-        _manifest = LibraryManifest.Load(_store.ManifestPath, message => host.Log(LogLevel.Warning, message));
-        _sync = new LibrarySync(_manifest, _store, TagReader.Read, (level, message, ex) => host.Log(level, message, ex), host.ShutdownToken);
+        void Log(LogLevel level, string message, Exception? exception = null) => host.Log(level, message, exception);
+
+        var store = new LibraryStore(host.DataDirectory);
+        var manifest = LibraryManifest.Load(host.DataDirectory, MusicFolder(), message => host.Log(LogLevel.Warning, message));
+        var operations = new LibraryOperations(manifest, store, new WindowsFileProbe(), (level, message) => host.Log(level, message));
+        var sync = new LibrarySync(manifest, store, () => ScanPlan.Build(manifest.Snapshot(), manifest.MusicFolder), TagReader.Read, LibrarySync.WindowsIdentity, Log, host.ShutdownToken);
+        _service = new LibraryService(manifest, store, sync, operations, () => new WindowsFileProbe(), Log, host.ShutdownToken);
+        _service.Start();
+
         // The VLC download: its own client (the host's is not part of the SDK), into tools\ next to the exe —
         // the folder the app keeps yt-dlp and ffmpeg in, computed the way BinaryManager computes it.
         _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd($"PixieDownloader-Library/{typeof(LibraryPlugin).Assembly.GetName().Version?.ToString(3) ?? "dev"}");
         var vlc = new VlcInstaller(_http, Path.Combine(AppContext.BaseDirectory, "tools"), (level, message) => host.Log(level, message));
-        _tab = new LibraryTabViewModel(_manifest, _sync, host, vlc);
+
+        _tab = new LibraryTabViewModel(_service, host, vlc);
         host.DownloadCompleted += OnDownloadCompleted;
-        host.Log(LogLevel.Debug, $"{_manifest.Roots.Count} pasta(s) no catálogo, estado {_manifest.Status}");
+        var snapshot = manifest.Snapshot();
+        host.Log(LogLevel.Debug, $"biblioteca em {manifest.StorageRoot}: {snapshot.Sources.Count()} fonte(s), {snapshot.Groups.Count} grupo(s), estado {snapshot.Status}{(snapshot.ReadOnly ? ", só leitura" : "")}");
+    }
+
+    /// <summary>The system's Music folder — the storage root unless the person chose another. Never a literal path with a user name in it.</summary>
+    private static string MusicFolder()
+    {
+        var music = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+        if (string.IsNullOrWhiteSpace(music))
+            music = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Music");
+        return music;
     }
 
     public string TabHeader => "Biblioteca";
@@ -51,33 +66,8 @@ public sealed class LibraryPlugin : IPixiePlugin, IUiContribution
         var path = e.Result.OutputFilePath;
         if (string.IsNullOrEmpty(path))
             return;
-        if (!_manifest.Extensions.Contains(Path.GetExtension(path)))
-            return;   // a GIF, say, with GIFs not in the catalogue
-
-        if (_manifest.RootOf(path) is null)
-        {
-            if (!_manifest.AutoAddRoots)
-            {
-                _host.Log(LogLevel.Debug, $"{Path.GetFileName(path)} ficou fora do catálogo (pasta não cadastrada)");
-                return;
-            }
-            // The app's output folder is the root the user would add by hand; the file's own folder if the
-            // request did not say (or said something the file is not under — the template may have moved it).
-            var folder = e.Request.OutputDirectory;
-            if (string.IsNullOrWhiteSpace(folder) || !PathUtil.IsUnder(path, folder))
-                folder = Path.GetDirectoryName(path)!;
-            folder = PathUtil.Normalize(folder);
-            var name = LibraryTabViewModel.RootNameFor(folder);
-            var taken = new HashSet<string>(_manifest.Roots.Select(r => r.Name), StringComparer.OrdinalIgnoreCase);
-            for (var i = 2; taken.Contains(name); i++)
-                name = $"{LibraryTabViewModel.RootNameFor(folder)} ({i})";
-            _manifest.Update(m => m.Roots.Add(new LibraryRoot(name, folder)));
-            _host.Log(LogLevel.Info, $"pasta \"{name}\" ({folder}) entrou no catálogo por causa de um download");
-            _tab.RootsChanged();
-        }
-
-        _store.Inbox.Append(path);
-        _manifest.MarkPending();
-        _sync.Request(SyncMode.Incremental);
+        if (_service.Operations.Deliver(path, e.Request.OutputDirectory))
+            _service.Sync.Request(SyncMode.Incremental);
+        _service.RequestReconcile();
     }
 }

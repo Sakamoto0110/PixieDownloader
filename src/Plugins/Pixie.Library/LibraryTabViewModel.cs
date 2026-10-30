@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
-using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -15,25 +14,27 @@ using YtDlpCore;
 
 namespace Pixie.Library;
 
-/// <summary>A folder of the catalogue as a toggle on top of the tab — "Músicas · 1.284"; the first one is every folder.</summary>
+/// <summary>A folder of the catalogue as a toggle on top of the tab — "Músicas · 1.284"; the first one is every folder, the second the storage root.</summary>
 public sealed class RootOption : ObservableObject
 {
     private readonly Action<RootOption> _select;
     private bool _isSelected;
 
-    internal RootOption(LibraryRoot? root, int count, bool unavailable, Action<RootOption> select)
+    internal RootOption(SourceRef? root, int count, bool unavailable, Action<RootOption> select)
     {
         Root = root;
-        Path = root is null ? null : PathUtil.Normalize(root.Path);
+        Path = root?.Path;
         Name = root?.Name ?? "Todas";
         Count = count;
         Unavailable = unavailable;
         Label = $"{Name} · {Format.Count(count)}" + (unavailable ? " ⚠" : "");
-        ToolTip = root is null ? "Tudo que está no catálogo" : root.Path + (unavailable ? "\nPasta não encontrada — disco desligado? O que já estava no catálogo continua listado." : "");
+        ToolTip = root is null ? "Tudo que está no catálogo"
+            : root.Path + (root.IsStorageRoot ? "\nA pasta da biblioteca: pra onde Importar copia e onde Criar pasta cria" : "")
+            + (unavailable ? "\nPasta não encontrada — disco desligado? O que já estava no catálogo continua listado." : "");
         _select = select;
     }
 
-    internal LibraryRoot? Root { get; }
+    internal SourceRef? Root { get; }
     public string? Path { get; }
     public string Name { get; }
     public int Count { get; }
@@ -41,6 +42,7 @@ public sealed class RootOption : ObservableObject
     public string Label { get; }
     public string ToolTip { get; }
     public bool IsAll => Root is null;
+    public bool IsStorageRoot => Root is { IsStorageRoot: true };
 
     /// <summary>Two-way from the toggle. Turning one on turns the others off; turning the current one off is ignored.</summary>
     public bool IsSelected
@@ -58,93 +60,83 @@ public sealed class RootOption : ObservableObject
     internal void SetSelected(bool value) => SetProperty(ref _isSelected, value, nameof(IsSelected));
 }
 
-/// <summary>One entry of the sort combo.</summary>
-public sealed record SortOption(string Label, System.Collections.IComparer Comparer)
-{
-    public override string ToString() => Label;
-}
-
-/// <summary>One entry of the type combo.</summary>
-public sealed record KindOption(string Label, FileKind? Kind)
-{
-    public override string ToString() => Label;
-}
+/// <summary>A group as the "Adicionar a" submenu lists it: its path in the group tree, and whether the row already belongs to it.</summary>
+public sealed record GroupChoice(string Id, string Label, bool Checked);
 
 /// <summary>
-/// The "Biblioteca" tab. The runner's events come in on pool threads and are marshalled here; the rows are a
-/// flat observable list under a <see cref="ListCollectionView"/> that does the filtering (folder, type, search),
-/// the sorting and — by default — the grouping by folder, so the list box virtualises over the whole catalogue.
-/// Opening the tab shows what the index had and asks for an incremental sync behind it.
+/// The "Biblioteca" tab: one list, built by the projection from the reconciled model — "Tudo" over the storage
+/// root and the other sources, then the groups, every container the same collapsible line — filtered by the
+/// chips, the type and the search, sorted inside each container. The runner's and the service's events come in
+/// on pool threads and are marshalled here; every operation goes through <see cref="LibraryOperations"/> and
+/// the tab learns of its effect from the next model. Opening the tab shows what the index had and asks for an
+/// incremental sync behind it.
 /// </summary>
 public sealed class LibraryTabViewModel : ObservableObject
 {
+    private readonly LibraryService _service;
     private readonly LibraryManifest _manifest;
     private readonly LibrarySync _sync;
+    private readonly LibraryOperations _operations;
     private readonly IPluginHost _host;
     private readonly VlcInstaller? _vlc;
     private readonly Dispatcher _dispatcher;
-    private readonly Dictionary<string, LibraryRow> _byPath = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, FolderGroup> _groups = new(StringComparer.OrdinalIgnoreCase);
-    private readonly PropertyGroupDescription _grouping = new(nameof(LibraryRow.Group)) { CustomSort = FolderGroup.Comparer };
+    private readonly Dictionary<string, LibraryRow> _byKey = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
     private readonly DispatcherTimer _filterTimer;
-    private readonly ListCollectionView _view;
-    private bool _searching;
+    private readonly List<FileNode> _early = [];
     private bool _opened;
     private DateTime _lastAutoCheck = DateTime.MinValue;
     private string? _progress;
-    private IReadOnlyList<string> _unavailable = [];
+    private LibraryModel? _model;
     private string? _fault;
+    private IReadOnlyList<LibraryRow> _selection = [];
+    private Action<string>? _pendingName;
 
-    internal LibraryTabViewModel(LibraryManifest manifest, LibrarySync sync, IPluginHost host, VlcInstaller? vlc = null)
+    internal LibraryTabViewModel(LibraryService service, IPluginHost host, VlcInstaller? vlc = null)
     {
-        _manifest = manifest;
-        _sync = sync;
+        _service = service;
+        _manifest = service.Manifest;
+        _sync = service.Sync;
+        _operations = service.Operations;
         _host = host;
         _vlc = vlc;
         _dispatcher = Dispatcher.CurrentDispatcher;
         VlcIcon = vlc is null ? null : Player.VlcIcon.Load();
 
-        SortOptions =
-        [
-            new SortOption("Recentes", Comparer<LibraryRow>.Create((a, b) => b.Added.CompareTo(a.Added) is var c && c != 0 ? c : string.Compare(a.Title, b.Title, StringComparison.CurrentCultureIgnoreCase))),
-            new SortOption("Título", Comparer<LibraryRow>.Create((a, b) => string.Compare(a.Title, b.Title, StringComparison.CurrentCultureIgnoreCase))),
-            new SortOption("Artista", Comparer<LibraryRow>.Create((a, b) => string.Compare(a.Subtitle, b.Subtitle, StringComparison.CurrentCultureIgnoreCase) is var c && c != 0 ? c : string.Compare(a.Title, b.Title, StringComparison.CurrentCultureIgnoreCase))),
-            new SortOption("Duração", Comparer<LibraryRow>.Create((a, b) => b.Duration.CompareTo(a.Duration))),
-            new SortOption("Tamanho", Comparer<LibraryRow>.Create((a, b) => b.Size.CompareTo(a.Size))),
-            new SortOption("Pasta", Comparer<LibraryRow>.Create((a, b) => string.Compare(a.Path, b.Path, StringComparison.OrdinalIgnoreCase))),
-        ];
         _selectedSort = SortOptions[0];
-        KindOptions = [new KindOption("Tudo", null), new KindOption("Áudio", FileKind.Audio), new KindOption("Vídeo", FileKind.Video), new KindOption("Outros", FileKind.Other)];
         _selectedKind = KindOptions[0];
-
-        _view = (ListCollectionView)CollectionViewSource.GetDefaultView(Rows);
-        _view.CustomSort = _selectedSort.Comparer;
-        _view.Filter = o => o is LibraryRow row && Passes(row);
-        if (_manifest.GroupByFolder)
-            _view.GroupDescriptions.Add(_grouping);
+        _expanded.Add(LibraryProjection.TopKey);   // "Tudo" starts open: the library's own tree is the overview
 
         _filterTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher) { Interval = TimeSpan.FromMilliseconds(200) };
-        _filterTimer.Tick += (_, _) => { _filterTimer.Stop(); RefreshView(); };
+        _filterTimer.Tick += (_, _) => { _filterTimer.Stop(); Reproject(); };
 
-        SyncCommand = new RelayCommand(() => _sync.Request(SyncMode.Full), () => HasRoots && !IsSyncing);
-        AddRootCommand = new RelayCommand(AddRoot);
-        RemoveRootCommand = new RelayCommand(RemoveSelectedRoot, () => SelectedRoot is { IsAll: false });
-        RenameRootCommand = new RelayCommand(RenameSelectedRoot, () => SelectedRoot is { IsAll: false } && !string.IsNullOrWhiteSpace(RootNameEdit));
+        SyncCommand = new RelayCommand(() => _sync.Request(SyncMode.Full), () => !IsSyncing);
+        AddFolderCommand = new RelayCommand(AddFolder);
+        AddFilesCommand = new RelayCommand(AddFiles);
+        ImportFilesCommand = new RelayCommand(ImportFiles, () => !IsImporting);
+        ImportFolderCommand = new RelayCommand(ImportFolder, () => !IsImporting);
+        CreateFolderCommand = new RelayCommand(() => AskName("Nome da pasta nova (em " + _operations.StorageRoot + "):", name => Run(_operations.CreatePhysicalFolder(null, name))));
+        CreateGroupCommand = new RelayCommand(() => AskName("Nome do grupo:", name => Run(_operations.CreateGroup(name))));
+        ChangeStorageRootCommand = new RelayCommand(ChangeStorageRoot);
+        NamePromptOkCommand = new RelayCommand(CommitName, () => !string.IsNullOrWhiteSpace(NamePromptText));
+        NamePromptCancelCommand = new RelayCommand(() => { _pendingName = null; ShowNamePrompt = false; });
+        RemoveRootCommand = new RelayCommand(RemoveSelectedRoot, () => SelectedRoot is { IsAll: false, IsStorageRoot: false });
+        RenameRootCommand = new RelayCommand(RenameSelectedRoot, () => SelectedRoot is { IsAll: false, IsStorageRoot: false } && !string.IsNullOrWhiteSpace(RootNameEdit));
         OpenRootFolderCommand = new RelayCommand(() => OpenFolder(SelectedRoot?.Path), () => SelectedRoot is { IsAll: false, Unavailable: false });
         OpenCommand = new RelayCommand<LibraryRow>(Open);
         ShowInFolderCommand = new RelayCommand<LibraryRow>(ShowInFolder);
+        ToggleExpandCommand = new RelayCommand<LibraryRow>(ToggleExpand);
         ChoosePlayerCommand = new RelayCommand(ChoosePlayer);
         UseDefaultPlayerCommand = new RelayCommand(() => SetPlayer(null), () => HasPlayer);
         UseVlcCommand = new RelayCommand(() => SetPlayer(AvailableVlc), () => AvailableVlc is { } vlc && !IsVlcBusy && !IsPlayer(vlc));
         DownloadVlcCommand = new RelayCommand(AskOrDownloadVlc, () => _vlc is not null && !IsVlcBusy && !ShowVlcPrompt);
+        UpdateVlcCommand = new RelayCommand(() => DownloadVlc(pick: false), () => HasVlcUpdate && !IsVlcBusy);
         VlcPromptUseCommand = new RelayCommand(() => { ShowVlcPrompt = false; SetPlayer(AvailableVlc); });
         VlcPromptDownloadCommand = new RelayCommand(() => { ShowVlcPrompt = false; DownloadVlc(); });
         VlcPromptCancelCommand = new RelayCommand(() => ShowVlcPrompt = false);
 
-        // The rows are built where the event arrives (a pool thread: they are immutable) and folded in on the UI thread.
-        _sync.IndexLoaded += index => { var rows = BuildRows(index); Post(() => ApplyRows(rows)); };
         _sync.Progress += p => Post(() => OnProgress(p));
-        _sync.Completed += result => { var rows = BuildRows(result.Index); Post(() => OnCompleted(result, rows)); };
+        _sync.Completed += result => Post(() => OnCompleted(result));
         _sync.Faulted += ex => Post(() => { _fault = ex.Message; UpdateStatus(); });
         _sync.RunStateChanged += () => Post(() =>
         {
@@ -154,6 +146,7 @@ public sealed class LibraryTabViewModel : ObservableObject
             UpdateStatus();
             CommandManager.InvalidateRequerySuggested();
         });
+        _service.ModelChanged += model => Post(() => OnModel(model));
 
         RefreshRoots();
         UpdateStatus();
@@ -162,10 +155,9 @@ public sealed class LibraryTabViewModel : ObservableObject
     // ───── Lists and selection ─────
 
     public BulkObservableCollection<LibraryRow> Rows { get; } = [];
-    public ICollectionView RowsView => _view;
     public ObservableCollection<RootOption> Roots { get; } = [];
-    public IReadOnlyList<SortOption> SortOptions { get; }
-    public IReadOnlyList<KindOption> KindOptions { get; }
+    public IReadOnlyList<SortOption> SortOptions { get; } = SortOption.All;
+    public IReadOnlyList<KindOption> KindOptions { get; } = KindOption.All;
 
     private RootOption? _selectedRoot;
     public RootOption? SelectedRoot
@@ -175,13 +167,18 @@ public sealed class LibraryTabViewModel : ObservableObject
         {
             if (!SetProperty(ref _selectedRoot, value))
                 return;
-            RootNameEdit = value?.Root?.Name ?? "";
+            RootNameEdit = value?.Root is { IsStorageRoot: false } r ? r.Name : "";
             OnPropertyChanged(nameof(HasSelectedRoot));
+            OnPropertyChanged(nameof(HasSelectedStorageRoot));
             OnPropertyChanged(nameof(SelectedRootPath));
         }
     }
 
-    public bool HasSelectedRoot => SelectedRoot is { IsAll: false };
+    /// <summary>A folder source is selected: it can be renamed, opened, taken out.</summary>
+    public bool HasSelectedRoot => SelectedRoot is { IsAll: false, IsStorageRoot: false };
+
+    /// <summary>The storage root is selected: its path, and the way to change it.</summary>
+    public bool HasSelectedStorageRoot => SelectedRoot is { IsStorageRoot: true };
     public string SelectedRootPath => SelectedRoot?.Root?.Path ?? "";
 
     private string _rootNameEdit = "";
@@ -195,8 +192,7 @@ public sealed class LibraryTabViewModel : ObservableObject
         {
             if (value is null || !SetProperty(ref _selectedSort, value))
                 return;
-            _view.CustomSort = value.Comparer;
-            UpdateCounts();
+            Reproject();
         }
     }
 
@@ -208,7 +204,7 @@ public sealed class LibraryTabViewModel : ObservableObject
         {
             if (value is null || !SetProperty(ref _selectedKind, value))
                 return;
-            RefreshView();
+            Reproject();
         }
     }
 
@@ -226,29 +222,37 @@ public sealed class LibraryTabViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Folder headers on (the default) or off. Persisted in the manifest: it is how the person likes the list,
-    /// like the player. The view regroups on its own when the description comes or goes.
+    /// Containers on (the default) or off. Persisted in the manifest: it is how the person likes the list, like
+    /// the player. Off, the list is one flat run of files in the chosen order — no folders, no groups.
     /// </summary>
     public bool GroupByFolder
     {
         get => _manifest.GroupByFolder;
         set
         {
-            if (value == _manifest.GroupByFolder)
+            if (value == _manifest.GroupByFolder || _manifest.ReadOnly)
                 return;
             _manifest.Update(m => m.GroupByFolder = value);
             OnPropertyChanged();
-            if (value)
-                _view.GroupDescriptions.Add(_grouping);
-            else
-                _view.GroupDescriptions.Clear();
+            Reproject();
         }
     }
+
+    /// <summary>The rows the list has selected right now, as the view reports them; what the context menu and a drag act on.</summary>
+    internal IReadOnlyList<LibraryRow> Selection => _selection;
+
+    public void SetSelection(IEnumerable<LibraryRow> rows) => _selection = rows.ToList();
 
     // ───── Status ─────
 
     private bool _isSyncing;
     public bool IsSyncing { get => _isSyncing; private set => SetProperty(ref _isSyncing, value); }
+
+    private bool _isImporting;
+    public bool IsImporting { get => _isImporting; private set { if (SetProperty(ref _isImporting, value)) CommandManager.InvalidateRequerySuggested(); } }
+
+    private string _importStatusText = "";
+    public string ImportStatusText { get => _importStatusText; private set => SetProperty(ref _importStatusText, value); }
 
     private string _statusText = "";
     public string StatusText { get => _statusText; private set => SetProperty(ref _statusText, value); }
@@ -260,15 +264,47 @@ public sealed class LibraryTabViewModel : ObservableObject
     private string _countText = "";
     public string CountText { get => _countText; private set => SetProperty(ref _countText, value); }
 
-    private bool _hasRoots;
-    public bool HasRoots { get => _hasRoots; private set { if (SetProperty(ref _hasRoots, value)) OnPropertyChanged(nameof(ShowEmptyState)); } }
-    public bool ShowEmptyState => !HasRoots;
+    private bool _showEmptyState;
+    /// <summary>Nothing listed at all (as opposed to nothing passing the filter).</summary>
+    public bool ShowEmptyState { get => _showEmptyState; private set => SetProperty(ref _showEmptyState, value); }
 
     private bool _showNoMatches;
     public bool ShowNoMatches { get => _showNoMatches; private set => SetProperty(ref _showNoMatches, value); }
 
     private bool _showSettings;
     public bool ShowSettings { get => _showSettings; set => SetProperty(ref _showSettings, value); }
+
+    public bool IsReadOnly => _manifest.ReadOnly;
+
+    // ───── The name band (a new folder, a new group, a renamed group) ─────
+
+    private bool _showNamePrompt;
+    public bool ShowNamePrompt { get => _showNamePrompt; private set => SetProperty(ref _showNamePrompt, value); }
+
+    private string _namePromptTitle = "";
+    public string NamePromptTitle { get => _namePromptTitle; private set => SetProperty(ref _namePromptTitle, value); }
+
+    private string _namePromptText = "";
+    public string NamePromptText { get => _namePromptText; set => SetProperty(ref _namePromptText, value); }
+
+    private void AskName(string title, Action<string> commit, string initial = "")
+    {
+        NamePromptTitle = title;
+        NamePromptText = initial;
+        _pendingName = commit;
+        ShowNamePrompt = true;
+    }
+
+    private void CommitName()
+    {
+        var name = NamePromptText.Trim();
+        var commit = _pendingName;
+        if (name.Length == 0 || commit is null)
+            return;
+        ShowNamePrompt = false;
+        _pendingName = null;
+        commit(name);
+    }
 
     // ───── Settings (two-way with the manifest) ─────
 
@@ -299,11 +335,8 @@ public sealed class LibraryTabViewModel : ObservableObject
             }
             _manifest.Update(m => m.ExtraExtensions = parsed);
             OnPropertyChanged();
-            if (HasRoots)
-            {
-                _manifest.MarkPending();
-                _sync.Request(SyncMode.Full);
-            }
+            _manifest.MarkPending();
+            _sync.Request(SyncMode.Full);
         }
     }
 
@@ -343,7 +376,24 @@ public sealed class LibraryTabViewModel : ObservableObject
 
     private string _vlcStatusText = "";
     /// <summary>Where the download is, shown next to the buttons while it runs.</summary>
-    public string VlcStatusText { get => _vlcStatusText; private set => SetProperty(ref _vlcStatusText, value); }
+    public string VlcStatusText { get => _vlcStatusText; private set { if (SetProperty(ref _vlcStatusText, value)) OnPropertyChanged(nameof(VlcUpdateLabel)); } }
+
+    // The portable VLC's update: asked once per session, when the tab first opens and tools\vlc is there.
+    // A newer version shows a button in the header; the download is the cone's, and the player stays as it is.
+
+    private bool _vlcUpdateChecked;
+    private string? _vlcUpdate;
+
+    /// <summary>The version VideoLAN has that the portable VLC is behind, or <see langword="null"/>.</summary>
+    public string? VlcUpdate
+    {
+        get => _vlcUpdate;
+        private set { if (SetProperty(ref _vlcUpdate, value)) NotifyVlc(); }
+    }
+
+    public bool HasVlcUpdate => _vlcUpdate is not null;
+    public string VlcUpdateLabel => IsVlcBusy && VlcStatusText.Length > 0 ? VlcStatusText : "Atualizar VLC";
+    public string VlcUpdateToolTip => $"VLC portátil {_vlc?.InstalledVersion} → {_vlcUpdate}";
 
     private bool _showVlcPrompt;
     public bool ShowVlcPrompt { get => _showVlcPrompt; private set { if (SetProperty(ref _showVlcPrompt, value)) NotifyVlc(); } }
@@ -363,7 +413,33 @@ public sealed class LibraryTabViewModel : ObservableObject
         OnPropertyChanged(nameof(AvailableVlc));
         OnPropertyChanged(nameof(UseVlcToolTip));
         OnPropertyChanged(nameof(DownloadVlcToolTip));
+        OnPropertyChanged(nameof(HasVlcUpdate));
+        OnPropertyChanged(nameof(VlcUpdateLabel));
+        OnPropertyChanged(nameof(VlcUpdateToolTip));
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>The session's one question to VideoLAN, only with the portable VLC in tools\vlc. Offline is silent.</summary>
+    private async void CheckVlcUpdate()
+    {
+        if (_vlcUpdateChecked || _vlc is null || !_vlc.IsInstalled)
+            return;
+        _vlcUpdateChecked = true;
+        try
+        {
+            var latest = await _vlc.LatestVersionAsync(_host.ShutdownToken);
+            var installed = _vlc.InstalledVersion;
+            if (latest is not null && VlcInstaller.IsNewer(latest, installed))
+            {
+                _host.Log(LogLevel.Info, $"VLC portátil {installed} → {latest} disponível");
+                VlcUpdate = latest;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ex is not OperationCanceledException)
+                _host.Log(LogLevel.Debug, $"atualização do VLC: {ex.Message}");
+        }
     }
 
     /// <summary>The session's one look for a VLC installed in Windows. Silent; nothing is written anywhere.</summary>
@@ -381,23 +457,33 @@ public sealed class LibraryTabViewModel : ObservableObject
     // ───── Commands ─────
 
     public ICommand SyncCommand { get; }
-    public ICommand AddRootCommand { get; }
+    public ICommand AddFolderCommand { get; }
+    public ICommand AddFilesCommand { get; }
+    public ICommand ImportFilesCommand { get; }
+    public ICommand ImportFolderCommand { get; }
+    public ICommand CreateFolderCommand { get; }
+    public ICommand CreateGroupCommand { get; }
+    public ICommand ChangeStorageRootCommand { get; }
+    public ICommand NamePromptOkCommand { get; }
+    public ICommand NamePromptCancelCommand { get; }
     public ICommand RemoveRootCommand { get; }
     public ICommand RenameRootCommand { get; }
     public ICommand OpenRootFolderCommand { get; }
     public ICommand OpenCommand { get; }
     public ICommand ShowInFolderCommand { get; }
+    public ICommand ToggleExpandCommand { get; }
     public ICommand ChoosePlayerCommand { get; }
     public ICommand UseDefaultPlayerCommand { get; }
     public ICommand UseVlcCommand { get; }
     public ICommand DownloadVlcCommand { get; }
+    public ICommand UpdateVlcCommand { get; }
     public ICommand VlcPromptUseCommand { get; }
     public ICommand VlcPromptDownloadCommand { get; }
     public ICommand VlcPromptCancelCommand { get; }
 
     // ───── Lifecycle ─────
 
-    /// <summary>The view got shown (every time the tab is selected): show the index, then check the folders behind it.</summary>
+    /// <summary>The view got shown (every time the tab is selected): show the model, then check the folders behind it.</summary>
     public void OnTabOpened()
     {
         if (!_opened)
@@ -406,106 +492,313 @@ public sealed class LibraryTabViewModel : ObservableObject
             _ = _sync.EnsureLoadedAsync();
         }
         CheckInstalledVlc();
+        CheckVlcUpdate();
         // The check is one stat per known folder — cheap, but not for free on a sleeping disk, so not on every tab flick.
-        if (!_manifest.AutoSync || _manifest.Roots.Count == 0 || DateTime.UtcNow - _lastAutoCheck < TimeSpan.FromSeconds(5))
+        if (!_manifest.AutoSync || DateTime.UtcNow - _lastAutoCheck < TimeSpan.FromSeconds(5))
             return;
         _lastAutoCheck = DateTime.UtcNow;
         _sync.Request(SyncMode.Incremental);
     }
 
-    /// <summary>The plugin added a root on its own (a download landed outside every folder).</summary>
-    internal void RootsChanged() => Post(() => { RefreshRoots(); UpdateStatus(); });
+    // ───── The model and the rows ─────
 
-    // ───── Roots ─────
-
-    private void AddRoot()
+    private void OnModel(LibraryModel model)
     {
-        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Pasta pra entrar na Biblioteca", Multiselect = false };
+        _model = model;
+        _early.Clear();
+        RefreshRoots();
+        Reproject();
+        UpdateStatus();
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>The folders the rows are attributed to, the storage root first: what the chips show and what a row's "root" is.</summary>
+    private List<SourceRef> SourceRefs()
+    {
+        var storage = _manifest.StorageRoot;
+        var refs = new List<SourceRef> { new(null, LegacyMigration.NameFor(storage), storage) };
+        foreach (var item in _manifest.Snapshot().Sources.Where(i => i.IsFolder))
+        {
+            if (ScanPlan.ResolvePath(item) is { } path)
+                refs.Add(new SourceRef(item.Id, item.Source!.Name, path));
+        }
+        return refs;
+    }
+
+    /// <summary>Builds the rows again from the model and the tab's state, and folds them into the list.</summary>
+    private void Reproject()
+    {
+        if (_model is null)
+            return;
+        var options = new ProjectionOptions(SelectedRoot?.Path, SelectedKind.Kind, FilterText, SelectedSort.Comparer, GroupByFolder, _expanded, _early.ToArray());
+        var projection = LibraryProjection.Build(_model, SourceRefs(), options);
+        _stats = (projection.Files, projection.Seconds, projection.Bytes);
+        ApplyRows(projection.Rows);
+    }
+
+    private (int Files, double Seconds, long Bytes) _stats;
+
+    /// <summary>
+    /// Folds a row set into the list by key: new rows in, rows whose signature changed replaced in place, rows
+    /// that went removed — and the order of the projection kept, so an opened container shows its children
+    /// right under it. A small diff is applied row by row, so the list box keeps its scroll and selection; a big
+    /// one (the first load, a search) is one reset — the list lays out once instead of a thousand times.
+    /// </summary>
+    private void ApplyRows(List<LibraryRow> rows)
+    {
+        var changes = 0;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in rows)
+        {
+            if (!seen.Add(row.Key))
+                continue;
+            if (!_byKey.TryGetValue(row.Key, out var existing) || existing.Signature != row.Signature)
+                changes++;
+        }
+        changes += Rows.Count(r => !seen.Contains(r.Key));
+        var unique = rows.Where(r => seen.Remove(r.Key)).ToList();
+
+        if (changes > 200 || Rows.Count == 0 || unique.Count == 0)
+        {
+            Rows.ReplaceAll(unique);
+        }
+        else
+        {
+            // In order: walk the wanted rows, keeping the list aligned with them.
+            for (var i = 0; i < unique.Count; i++)
+            {
+                var wanted = unique[i];
+                if (i < Rows.Count && Rows[i].Key == wanted.Key)
+                {
+                    if (Rows[i].Signature != wanted.Signature)
+                        Rows[i] = wanted;
+                    continue;
+                }
+                var at = -1;
+                for (var j = i + 1; j < Rows.Count; j++)
+                {
+                    if (Rows[j].Key == wanted.Key)
+                    {
+                        at = j;
+                        break;
+                    }
+                }
+                if (at >= 0)
+                {
+                    // rows between i and at are gone
+                    for (var j = at - 1; j >= i; j--)
+                        Rows.RemoveAt(j);
+                    if (Rows[i].Signature != wanted.Signature)
+                        Rows[i] = wanted;
+                }
+                else
+                {
+                    Rows.Insert(i, wanted);
+                }
+            }
+            while (Rows.Count > unique.Count)
+                Rows.RemoveAt(Rows.Count - 1);
+        }
+        _byKey.Clear();
+        foreach (var row in unique)
+            _byKey[row.Key] = row;
+        UpdateCounts();
+    }
+
+    private void ToggleExpand(LibraryRow row)
+    {
+        if (!row.IsContainer)
+            return;
+        if (!string.IsNullOrWhiteSpace(FilterText))
+            return;   // a search opens everything; the flags come back as they were when it is cleared
+        if (!_expanded.Remove(row.Key))
+            _expanded.Add(row.Key);
+        Reproject();
+    }
+
+    /// <summary>The footer: the files the filters let through, open or not, once each — the same file under two containers is one file.</summary>
+    private void UpdateCounts()
+    {
+        var (n, seconds, bytes) = _stats;
+        var total = _model?.Index.Entries.Count ?? 0;
+        var filtered = n != total;
+        CountText = total == 0 && n == 0 ? "" : (filtered ? $"{Format.Count(n)} de {Format.Count(total)}" : Format.Count(n) + (n == 1 ? " arquivo" : " arquivos"))
+            + (n > 0 ? $" · {Format.TotalDuration(seconds)} · {Format.Size(bytes)}" : "");
+        ShowNoMatches = total > 0 && n == 0;
+        ShowEmptyState = total == 0 && !IsSyncing && _model is not null;
+    }
+
+    // ───── Roots: the storage root and the folder sources ─────
+
+    /// <summary>An operation's answer: a refusal goes to the warning line, a note to the log; a change reaches the tab through the runner and the model.</summary>
+    private bool Run(OperationResult result)
+    {
+        if (!result.Ok)
+        {
+            WarningText = result.Message ?? "não deu";
+            return false;
+        }
+        if (result.Message is { } note)
+            _host.Log(LogLevel.Info, note);
+        _sync.Request(SyncMode.Incremental);
+        _service.RequestReconcile();
+        return true;
+    }
+
+    private void AddFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Pasta pra entrar na Biblioteca (fica onde está)", Multiselect = false };
         if (dialog.ShowDialog(Application.Current?.MainWindow) != true || string.IsNullOrWhiteSpace(dialog.FolderName))
             return;
         var path = PathUtil.Normalize(dialog.FolderName);
-        if (_manifest.Roots.Any(r => PathUtil.Normalize(r.Path).Equals(path, StringComparison.OrdinalIgnoreCase)))
-        {
-            WarningText = "Essa pasta já está no catálogo.";
+        if (!Run(_operations.AddFolder(path)))
             return;
-        }
-        var root = new LibraryRoot(UniqueRootName(RootNameFor(path)), path);
-        _manifest.Update(m => m.Roots.Add(root));
-        _manifest.MarkPending();
-        _host.Log(LogLevel.Info, $"pasta \"{root.Name}\" ({root.Path}) entrou no catálogo");
         RefreshRoots();
-        Select(Roots.FirstOrDefault(o => o.Path == path) ?? Roots[0]);
+        Select(Roots.FirstOrDefault(o => o.Path is { } p && PathUtil.IsSamePath(p, path)) ?? Roots[0]);
+    }
+
+    private void AddFiles()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Arquivos pra entrar na Biblioteca (ficam onde estão)", Multiselect = true, CheckFileExists = true };
+        if (dialog.ShowDialog(Application.Current?.MainWindow) != true)
+            return;
+        var notes = new List<string>();
+        foreach (var file in dialog.FileNames)
+        {
+            var result = _operations.AddFile(file);
+            if (!result.Ok)
+                notes.Add($"{Path.GetFileName(file)}: {result.Message}");
+            else if (result.Message is { } note)
+                notes.Add($"{Path.GetFileName(file)}: {note}");
+        }
+        WarningText = string.Join("\n", notes);
         _sync.Request(SyncMode.Incremental);
+        _service.RequestReconcile();
+    }
+
+    private async void ImportFiles()
+    {
+        var files = new Microsoft.Win32.OpenFileDialog { Title = "Arquivos pra copiar pra biblioteca", Multiselect = true, CheckFileExists = true };
+        if (files.ShowDialog(Application.Current?.MainWindow) != true || files.FileNames.Length == 0)
+            return;
+        var root = _operations.StorageRoot;
+        var into = new Microsoft.Win32.OpenFolderDialog { Title = $"Pasta de destino (dentro de {root})", InitialDirectory = root, Multiselect = false };
+        if (into.ShowDialog(Application.Current?.MainWindow) != true || string.IsNullOrWhiteSpace(into.FolderName))
+            return;
+        await RunImportAsync($"copiando {files.FileNames.Length} arquivo(s)", progress => _operations.ImportFilesAsync(files.FileNames, into.FolderName, progress, _host.ShutdownToken));
+    }
+
+    private async void ImportFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Pasta pra copiar pra biblioteca (inteira, como está)", Multiselect = false };
+        if (dialog.ShowDialog(Application.Current?.MainWindow) != true || string.IsNullOrWhiteSpace(dialog.FolderName))
+            return;
+        await RunImportAsync($"copiando {Path.GetFileName(PathUtil.Normalize(dialog.FolderName))}", progress => _operations.ImportFolderAsync(dialog.FolderName, progress, _host.ShutdownToken));
+    }
+
+    private async Task RunImportAsync(string what, Func<IProgress<double>, Task<OperationResult>> import)
+    {
+        if (IsImporting)
+            return;
+        IsImporting = true;
+        ImportStatusText = what + "…";
+        try
+        {
+            var progress = new Progress<double>(p => ImportStatusText = $"{what}… {p:0}%");
+            Run(await import(progress));
+        }
+        catch (OperationCanceledException)
+        {
+            // closing: nothing to say
+        }
+        catch (Exception ex)
+        {
+            WarningText = "Não consegui importar: " + ex.Message;
+            _host.Log(LogLevel.Warning, $"importar: {ex.Message}");
+        }
+        finally
+        {
+            IsImporting = false;
+            ImportStatusText = "";
+        }
+    }
+
+    private void ChangeStorageRoot()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "A pasta da biblioteca: pra onde Importar copia e onde Criar pasta cria", InitialDirectory = _operations.StorageRoot, Multiselect = false };
+        if (dialog.ShowDialog(Application.Current?.MainWindow) != true || string.IsNullOrWhiteSpace(dialog.FolderName))
+            return;
+        if (!Run(_operations.SetStorageRoot(dialog.FolderName)))
+            return;
+        RefreshRoots();
+        OnPropertyChanged(nameof(SelectedRootPath));
     }
 
     private void RemoveSelectedRoot()
     {
-        if (SelectedRoot is not { Root: { } root })
+        if (SelectedRoot is not { Root: { ItemId: { } id } })
             return;
-        _manifest.Update(m => m.Roots.RemoveAll(r => r.Path == root.Path));
-        _manifest.MarkPending();
-        _host.Log(LogLevel.Info, $"pasta \"{root.Name}\" saiu do catálogo (os arquivos ficam onde estão)");
+        if (!Run(_operations.RemoveSource(id)))
+            return;
         RefreshRoots();
         Select(Roots[0]);
-        _sync.Request(SyncMode.Incremental);
     }
 
     private void RenameSelectedRoot()
     {
-        if (SelectedRoot is not { Root: { } root } || string.IsNullOrWhiteSpace(RootNameEdit))
+        if (SelectedRoot is not { Root: { ItemId: { } id } root } || string.IsNullOrWhiteSpace(RootNameEdit))
             return;
         var name = RootNameEdit.Trim();
         if (name == root.Name)
             return;
-        _manifest.Update(m =>
+        var result = _operations.RenameSource(id, name);
+        if (!result.Ok)
         {
-            var i = m.Roots.FindIndex(r => r.Path == root.Path);
-            if (i >= 0)
-                m.Roots[i] = root with { Name = name };
-        });
-        RefreshRoots();
-        Select(Roots.FirstOrDefault(o => o.Path == PathUtil.Normalize(root.Path)) ?? Roots[0]);
-        // The rows carry the root name (subtitle, search): rebuild them from the index we have.
-        if (_sync.Index is { } index)
-            ApplyRows(BuildRows(index));
-    }
-
-    internal static string RootNameFor(string path)
-    {
-        var name = Path.GetFileName(PathUtil.Normalize(path));
-        return string.IsNullOrEmpty(name) ? path.TrimEnd(Path.DirectorySeparatorChar) : name;
-    }
-
-    private string UniqueRootName(string name)
-    {
-        var taken = new HashSet<string>(_manifest.Roots.Select(r => r.Name), StringComparer.OrdinalIgnoreCase);
-        if (!taken.Contains(name))
-            return name;
-        for (var i = 2; ; i++)
-        {
-            if (!taken.Contains($"{name} ({i})"))
-                return $"{name} ({i})";
+            WarningText = result.Message ?? "não deu";
+            return;
         }
+        RefreshRoots();
+        Select(Roots.FirstOrDefault(o => o.Path is { } p && PathUtil.IsSamePath(p, root.Path)) ?? Roots[0]);
+        _service.RequestReconcile();   // the rows carry the name (subtitle, search): the next model rebuilds them
+    }
+
+    /// <summary>Folders the model could not observe (disk off, gone): the chip gets its ⚠.</summary>
+    private HashSet<string> UnavailablePaths()
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (_model is null)
+            return paths;
+        foreach (var problem in _model.Problems)
+        {
+            if (problem.Code is "sourceUnavailable" or "sourceBroken" or "storageRootUnknown" or "storageRootMissing" && problem.Path is { } path)
+                paths.Add(PathUtil.Normalize(path));
+        }
+        return paths;
     }
 
     private void RefreshRoots()
     {
         var selectedPath = SelectedRoot?.Path;
-        var roots = _manifest.Roots;
+        var roots = SourceRefs();
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in Rows)
-            counts[row.RootPath] = counts.GetValueOrDefault(row.RootPath) + 1;
-        var unavailable = new HashSet<string>(_unavailable.Select(PathUtil.Normalize), StringComparer.OrdinalIgnoreCase);
+        var total = 0;
+        if (_model is not null)
+        {
+            foreach (var file in _model.Index.Entries)
+            {
+                total++;
+                var root = roots.Where(r => PathUtil.IsDescendantOrSame(file.FullPath, r.Path)).OrderByDescending(r => r.Path.Length).FirstOrDefault();
+                if (root is not null)
+                    counts[root.Path] = counts.GetValueOrDefault(root.Path) + 1;
+            }
+        }
+        var unavailable = UnavailablePaths();
 
         Roots.Clear();
-        Roots.Add(new RootOption(null, Rows.Count, false, Select));
+        Roots.Add(new RootOption(null, total, false, Select));
         foreach (var root in roots)
-        {
-            var path = PathUtil.Normalize(root.Path);
-            Roots.Add(new RootOption(root, counts.GetValueOrDefault(path), unavailable.Contains(path), Select));
-        }
-        HasRoots = roots.Count > 0;
-        Select(Roots.FirstOrDefault(o => o.Path == selectedPath) ?? Roots[0]);
+            Roots.Add(new RootOption(root, counts.GetValueOrDefault(root.Path), unavailable.Contains(root.Path), Select));
+        Select(Roots.FirstOrDefault(o => o.Path is { } p && selectedPath is not null && PathUtil.IsSamePath(p, selectedPath)) ?? Roots[0]);
     }
 
     private void Select(RootOption option)
@@ -515,163 +808,191 @@ public sealed class LibraryTabViewModel : ObservableObject
         var filterChanged = SelectedRoot?.Path != option.Path;   // the options are rebuilt often; the path is what filters
         SelectedRoot = option;
         if (filterChanged)
-            RefreshView();
+            Reproject();
     }
 
-    // ───── Rows ─────
+    // ───── Rows: what the context menu and a drop do ─────
 
-    private List<LibraryRow> BuildRows(IndexData index)
-    {
-        var roots = _manifest.Roots;
-        return index.Entries.Select(e => new LibraryRow(e, RootOf(roots, e.Path))).ToList();
-    }
+    /// <summary>The rows an action on <paramref name="row"/> applies to: the selection when the row is part of it, else the row alone.</summary>
+    internal IReadOnlyList<LibraryRow> TargetsOf(LibraryRow row)
+        => _selection.Any(r => r.Key == row.Key) ? _selection : [row];
 
-    /// <summary>
-    /// Folds a whole index (as rows) into the list by path: new rows in, rows whose file or folder changed
-    /// replaced in place, rows of files that went removed. A small diff is applied row by row, so the list box
-    /// keeps its scroll and selection across a sync; a big one (the first load, a full re-tag) is one reset —
-    /// the view sorts once instead of inserting thousands of times. (The source cannot change under a
-    /// DeferRefresh: the view throws.)
-    /// </summary>
-    private void ApplyRows(List<LibraryRow> rows)
+    /// <summary>A folder inside the storage root: where Criar pasta can create.</summary>
+    internal bool IsInsideStorageRoot(LibraryRow row)
+        => row.Path.Length > 0 && PathUtil.IsDescendantOrSame(row.Path, _operations.StorageRoot);
+
+    /// <summary>The groups the "Adicionar a" submenu offers, with their path in the tree; checked for the groups every target already belongs to.</summary>
+    internal IReadOnlyList<GroupChoice> GroupChoicesFor(IReadOnlyList<LibraryRow> targets)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var changes = new List<(LibraryRow? Old, LibraryRow New)>();
-        foreach (var row in rows)
+        var choices = new List<GroupChoice>();
+        if (_model is null)
+            return choices;
+        var itemIds = targets.Select(t => t.ItemId).Where(id => id is not null).ToList();
+        void Walk(GroupView group, string prefix)
         {
-            row.Group = GroupFor(row);
-            seen.Add(row.Path);
-            if (_byPath.TryGetValue(row.Path, out var existing))
-            {
-                if (existing.Entry == row.Entry && existing.RootName == row.RootName && existing.RootPath == row.RootPath)
-                    continue;
-                changes.Add((existing, row));
-            }
-            else
-            {
-                changes.Add((null, row));
-            }
+            var label = prefix.Length == 0 ? group.Name : prefix + " › " + group.Name;
+            var all = itemIds.Count == targets.Count && targets.Count > 0 && itemIds.All(id => group.Members.Any(m => m.Id == id));
+            choices.Add(new GroupChoice(group.Id, label, all));
+            foreach (var child in group.Children)
+                Walk(child, label);
         }
-        var gone = Rows.Where(r => !seen.Contains(r.Path)).ToList();
-        if (changes.Count + gone.Count == 0)
+        foreach (var group in _model.Groups)
+            Walk(group, "");
+        return choices;
+    }
+
+    /// <summary>"Adicionar a <grupo>" and a drop on a group: a membership per physical target; nothing moves.</summary>
+    internal void AddToGroup(string groupId, IReadOnlyList<LibraryRow> rows)
+    {
+        var targets = rows.Where(r => r.IsPhysical && !r.IsTop).Select(r => new Target(r.Path, r.IsFolder)).ToList();
+        if (targets.Count == 0)
+            return;
+        var result = _operations.AddToGroup(groupId, targets);
+        if (!result.Ok)
         {
-            RefreshRoots();
-            UpdateCounts();
-            UpdateStatus();
+            WarningText = result.Message ?? "não deu";
             return;
         }
+        if (_model?.FindGroup(groupId) is { } group)
+            OpenGroup(group);
+        _service.RequestReconcile();
+    }
 
-        if (changes.Count + gone.Count > 200 || Rows.Count == 0)
+    /// <summary>The group and the chain above it open, so what was just put in it is on screen.</summary>
+    private void OpenGroup(GroupView group)
+    {
+        var chain = new List<string>();
+        for (var g = group; g is not null; g = g.Parent)
+            chain.Insert(0, "g:" + g.Id);
+        for (var i = 1; i <= chain.Count; i++)
+            _expanded.Add(string.Join("|", chain.Take(i)));
+    }
+
+    internal void RemoveFromGroup(LibraryRow row)
+    {
+        if (row.InGroup is not { } group || row.ItemId is not { } itemId)
+            return;
+        var result = _operations.RemoveFromGroup(group.Id, itemId);
+        if (!result.Ok)
+            WarningText = result.Message ?? "não deu";
+        _service.RequestReconcile();
+    }
+
+    /// <summary>A group dropped on another group (or on "Tudo" = the top): only the group tree changes.</summary>
+    internal string? WhyNotMoveGroup(LibraryRow group, LibraryRow? onto)
+    {
+        if (group.GroupId is not { } id)
+            return "não é um grupo";
+        var newParent = onto is { IsGroup: true } ? onto.GroupId : null;
+        if (onto is not null && !onto.IsGroup && !onto.IsTop)
+            return "um grupo só entra em outro grupo";
+        return _operations.WhyNotMoveGroup(id, newParent);
+    }
+
+    internal void MoveGroup(LibraryRow group, LibraryRow? onto)
+    {
+        if (group.GroupId is not { } id)
+            return;
+        var newParent = onto is { IsGroup: true } ? onto.GroupId : null;
+        var result = _operations.MoveGroup(id, newParent);
+        if (!result.Ok)
+            WarningText = result.Message ?? "não deu";
+        else if (onto?.Group is { } target)
+            OpenGroup(target);
+        _service.RequestReconcile();
+    }
+
+    internal void RenameGroup(LibraryRow row)
+    {
+        if (row.Group is not { } group)
+            return;
+        AskName("Nome do grupo:", name => Run(_operations.RenameGroup(group.Id, name)), group.Name);
+    }
+
+    internal void CreateSubgroup(LibraryRow row)
+    {
+        if (row.Group is not { } group)
+            return;
+        AskName($"Nome do grupo novo (em {group.Name}):", name =>
         {
-            Rows.ReplaceAll(rows);
-            _byPath.Clear();
-            foreach (var row in rows)
-                _byPath[row.Path] = row;
+            if (Run(_operations.CreateGroup(name, group.Id)))
+                OpenGroup(group);
+        });
+    }
+
+    internal void DeleteGroup(LibraryRow row)
+    {
+        if (row.Group is not { } group)
+            return;
+        Run(_operations.DeleteGroup(group.Id));
+    }
+
+    internal void CreateFolderIn(LibraryRow row)
+    {
+        var parent = row.IsTop ? null : row.Path;
+        AskName($"Nome da pasta nova (em {(parent ?? _operations.StorageRoot)}):", name =>
+        {
+            if (Run(_operations.CreatePhysicalFolder(parent, name)))
+                _expanded.Add(row.Key);
+        });
+    }
+
+    /// <summary>"Mover fisicamente…": the destination asked for, then the move; the tree shows it after the scan.</summary>
+    internal async void MovePhysically(IReadOnlyList<LibraryRow> rows)
+    {
+        var targets = rows.Where(r => r.IsPhysical && !r.IsTop).Select(r => new Target(r.Path, r.IsFolder)).ToList();
+        if (targets.Count == 0)
+            return;
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = targets.Count == 1 ? $"Mover \"{Path.GetFileName(targets[0].Path)}\" para…" : $"Mover {targets.Count} itens para…",
+            InitialDirectory = _operations.StorageRoot,
+            Multiselect = false,
+        };
+        if (dialog.ShowDialog(Application.Current?.MainWindow) != true || string.IsNullOrWhiteSpace(dialog.FolderName))
+            return;
+        try
+        {
+            Run(await _operations.MovePhysicalAsync(targets, dialog.FolderName, _host.ShutdownToken));
+        }
+        catch (OperationCanceledException)
+        {
+            // closing
+        }
+        catch (Exception ex)
+        {
+            WarningText = "Não consegui mover: " + ex.Message;
+            _host.Log(LogLevel.Warning, $"mover: {ex.Message}");
+        }
+    }
+
+    /// <summary>"Localizar…": the person points at where the item is now.</summary>
+    internal void Relocate(LibraryRow row)
+    {
+        if (row.Item is not { } item)
+            return;
+        string? path;
+        if (item.IsFolder)
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog { Title = $"Onde está \"{row.Title}\" agora?", Multiselect = false };
+            path = dialog.ShowDialog(Application.Current?.MainWindow) == true ? dialog.FolderName : null;
         }
         else
         {
-            foreach (var (old, row) in changes)
-            {
-                if (old is null)
-                    Rows.Add(row);
-                else
-                    Rows[Rows.IndexOf(old)] = row;
-                _byPath[row.Path] = row;
-            }
-            foreach (var row in gone)
-            {
-                Rows.Remove(row);
-                _byPath.Remove(row.Path);
-            }
+            var dialog = new Microsoft.Win32.OpenFileDialog { Title = $"Onde está \"{row.Title}\" agora?", CheckFileExists = true };
+            path = dialog.ShowDialog(Application.Current?.MainWindow) == true ? dialog.FileName : null;
         }
-        if (gone.Count > 0)
-            PruneGroups();
-        RefreshRoots();
-        UpdateCounts();
-        UpdateStatus();
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+        Run(_operations.Relocate(item.Id, path));
     }
 
-    /// <summary>The just-downloaded files, shown before the scan is over.</summary>
-    private void Upsert(IReadOnlyList<LibraryEntry> entries)
+    internal void RemoveSource(LibraryRow row)
     {
-        var roots = _manifest.Roots;
-        foreach (var entry in entries)
-        {
-            var row = new LibraryRow(entry, RootOf(roots, entry.Path));
-            row.Group = GroupFor(row);
-            if (_byPath.TryGetValue(entry.Path, out var existing))
-                Rows[Rows.IndexOf(existing)] = row;
-            else
-                Rows.Add(row);
-            _byPath[entry.Path] = row;
-        }
-        RefreshRoots();
-        UpdateCounts();
-    }
-
-    private static LibraryRoot? RootOf(IReadOnlyList<LibraryRoot> roots, string path)
-        => roots.Where(r => PathUtil.IsUnder(path, r.Path)).OrderByDescending(r => r.Path.Length).FirstOrDefault();
-
-    // ───── Folder groups ─────
-
-    /// <summary>
-    /// The one header for the row's directory. A renamed root (or a directory that changed roots) gets a new
-    /// header, carrying the old one's flag. UI thread only, like everything that touches the rows.
-    /// </summary>
-    private FolderGroup GroupFor(LibraryRow row)
-    {
-        if (_groups.TryGetValue(row.Directory, out var group) && group.RootName == row.RootName && group.Folder == row.Folder)
-            return group;
-        var fresh = new FolderGroup(row.Directory, row.RootName, row.Folder);
-        if (group is not null)
-            fresh.IsExpanded = group.IsExpanded;
-        fresh.SetSearching(_searching);
-        _groups[row.Directory] = fresh;
-        return fresh;
-    }
-
-    private void PruneGroups()
-    {
-        var live = new HashSet<string>(Rows.Select(r => r.Directory), StringComparer.OrdinalIgnoreCase);
-        foreach (var directory in _groups.Keys.Where(d => !live.Contains(d)).ToList())
-            _groups.Remove(directory);
-    }
-
-    private bool Passes(LibraryRow row)
-        => (SelectedRoot is not { Path: { } rootPath } || row.RootPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase))
-           && (SelectedKind.Kind is not { } kind || row.Kind == kind)
-           && SearchText.Matches(row.SearchKey, FilterText);
-
-    private void RefreshView()
-    {
-        var searching = !string.IsNullOrWhiteSpace(FilterText);
-        if (searching != _searching)
-        {
-            _searching = searching;
-            foreach (var group in _groups.Values)
-                group.SetSearching(searching);
-        }
-        _view.Refresh();
-        UpdateCounts();
-    }
-
-    private void UpdateCounts()
-    {
-        var n = 0;
-        var seconds = 0d;
-        var bytes = 0L;
-        foreach (var o in _view)
-        {
-            if (o is not LibraryRow row)
-                continue;
-            n++;
-            seconds += row.Duration;
-            bytes += row.Size;
-        }
-        var filtered = n != Rows.Count;
-        CountText = Rows.Count == 0 ? "" : (filtered ? $"{Format.Count(n)} de {Format.Count(Rows.Count)}" : Format.Count(n) + (n == 1 ? " arquivo" : " arquivos"))
-            + (n > 0 ? $" · {Format.TotalDuration(seconds)} · {Format.Size(bytes)}" : "");
-        ShowNoMatches = HasRoots && Rows.Count > 0 && n == 0;
+        if (row.Item is not { IsSource: true } item)
+            return;
+        if (Run(_operations.RemoveSource(item.Id)))
+            RefreshRoots();
     }
 
     // ───── Sync feedback ─────
@@ -680,31 +1001,34 @@ public sealed class LibraryTabViewModel : ObservableObject
     {
         _progress = p.Phase == "listando" ? $"listando pastas ({p.Done})" : $"{p.Phase} {p.Done}/{p.Total}";
         if (p.Ready is { Count: > 0 } ready)
-            Upsert(ready);
+        {
+            _early.AddRange(ready);   // the just-downloaded files, shown before the scan is over
+            Reproject();
+        }
         UpdateStatus();
     }
 
-    private void OnCompleted(ScanResult result, List<LibraryRow> rows)
+    private void OnCompleted(ScanResult result)
     {
         _fault = null;
-        _unavailable = result.UnavailableRoots;
-        ApplyRows(rows);
         if (result.Added + result.Changed + result.Removed > 0 || result.Full)
             _host.Log(LogLevel.Info, $"biblioteca sincronizada{(result.Full ? " (completa)" : "")}: +{result.Added} · ~{result.Changed} · −{result.Removed}"
                 + (result.Unreadable > 0 ? $" · {result.Unreadable} sem tags legíveis" : "")
+                + (result.InaccessibleDirectories.Count > 0 ? $" · {result.InaccessibleDirectories.Count} pasta(s) sem acesso (mantidas)" : "")
                 + $" · {Format.Count(result.Index.Entries.Count)} no total");
     }
 
     private void UpdateStatus()
     {
-        var roots = _manifest.Roots;
+        var roots = Roots.Count - 1;   // the chips minus "Todas": the storage root and the folder sources
+        var files = _model?.Index.Entries.Count ?? 0;
         if (IsSyncing)
         {
             StatusText = "Sincronizando… " + (_progress ?? "");
         }
-        else if (roots.Count == 0)
+        else if (_manifest.ReadOnly)
         {
-            StatusText = "Nenhuma pasta no catálogo.";
+            StatusText = "Biblioteca de uma versão mais nova do plugin — só leitura. Atualize o plugin.";
         }
         else
         {
@@ -712,26 +1036,46 @@ public sealed class LibraryTabViewModel : ObservableObject
             var when = _manifest.LastSync is { } t ? t.ToLocalTime() : (DateTime?)null;
             var last = when is null ? "ainda não sincronizada"
                 : when.Value.Date == DateTime.Today ? $"sincronizada às {when:HH:mm}" : $"sincronizada em {when:d} {when:HH:mm}";
-            StatusText = $"{Format.Count(Rows.Count)} {(Rows.Count == 1 ? "arquivo" : "arquivos")} em {roots.Count} {(roots.Count == 1 ? "pasta" : "pastas")} · {last}"
+            var groups = _model?.AllGroups.Count ?? 0;
+            StatusText = $"{Format.Count(files)} {(files == 1 ? "arquivo" : "arquivos")} em {Math.Max(roots, 1)} {(roots <= 1 ? "pasta" : "pastas")}"
+                + (groups > 0 ? $" · {groups} {(groups == 1 ? "grupo" : "grupos")}" : "") + $" · {last}"
                 + (status == SyncStatus.Pending ? " · há mudanças pra sincronizar" : status == SyncStatus.Failed ? " · a última sincronização não terminou" : "");
         }
 
         var warnings = new List<string>();
         if (_fault is not null)
             warnings.Add("A sincronização falhou: " + _fault);
-        foreach (var path in _unavailable)
-            warnings.Add($"Pasta não encontrada: {path} — disco desligado? O que já estava no catálogo continua listado.");
+        if (_model is not null)
+        {
+            foreach (var problem in _model.Problems.Where(p => p.Severity >= Severity.Warning))
+                warnings.Add(problem.Message);
+        }
         WarningText = string.Join("\n", warnings);
+        ShowEmptyState = files == 0 && !IsSyncing && _model is not null;
     }
 
     // ───── Opening things ─────
 
-    private void Open(LibraryRow row)
+    /// <summary>A container opens or closes; a file goes to the player. VLC looks for one already running (and may wait for one to close): on the pool.</summary>
+    private async void Open(LibraryRow row)
     {
+        if (row.IsContainer)
+        {
+            ToggleExpand(row);
+            return;
+        }
+        if (row.IsMissing || row.Path.Length == 0)
+            return;
         try
         {
-            if (_manifest.Player is { } player)
-                Process.Start(new ProcessStartInfo(player) { ArgumentList = { row.Path }, UseShellExecute = false });
+            if (_manifest.Player is { } player && PlayerLaunch.IsVlc(player))
+            {
+                var path = row.Path;
+                var what = await Task.Run(() => PlayerLaunch.OpenInVlc(player, path));
+                _host.Log(LogLevel.Debug, $"abrir {path}: {what}");
+            }
+            else if (_manifest.Player is { } other)
+                Process.Start(PlayerLaunch.For(other, row.Path));
             else
                 Process.Start(new ProcessStartInfo(row.Path) { UseShellExecute = true });
         }
@@ -744,9 +1088,13 @@ public sealed class LibraryTabViewModel : ObservableObject
 
     private void ShowInFolder(LibraryRow row)
     {
+        if (row.IsGroup || row.Path.Length == 0)
+            return;
         try
         {
-            if (File.Exists(row.Path))
+            if (row.IsFolder)
+                OpenFolder(row.Path);
+            else if (File.Exists(row.Path))
                 Process.Start(new ProcessStartInfo("explorer.exe") { Arguments = $"/select,\"{row.Path}\"", UseShellExecute = false });
             else
                 OpenFolder(Path.GetDirectoryName(row.Path));
@@ -818,11 +1166,19 @@ public sealed class LibraryTabViewModel : ObservableObject
         }
     }
 
-    /// <summary>The download runs on the pool; the status text next to the buttons shows where it is and the tab keeps working. Done → it is the player.</summary>
-    private async void DownloadVlc()
+    /// <summary>
+    /// The download runs on the pool; the status text next to the buttons shows where it is and the tab keeps
+    /// working. Done → it is the player, unless <paramref name="pick"/> is off (the update: the player stays).
+    /// </summary>
+    private async void DownloadVlc(bool pick = true)
     {
         if (_vlc is null || IsVlcBusy)
             return;
+        if (_vlc.IsInstalled && _vlc.IsRunning())
+        {
+            WarningText = "Feche o VLC portátil antes: a pasta dele está em uso.";   // before the 80 MB, not after
+            return;
+        }
         VlcStatusText = "";
         IsVlcBusy = true;
         try
@@ -830,6 +1186,7 @@ public sealed class LibraryTabViewModel : ObservableObject
             var progress = new Progress<VlcProgress>(p => VlcStatusText = "VLC: " + p);
             var version = await _vlc.InstallAsync(progress, _host.ShutdownToken);
             _host.Log(LogLevel.Info, $"VLC {version} instalado em {_vlc.Directory}");
+            VlcUpdate = null;
         }
         catch (OperationCanceledException)
         {
@@ -846,7 +1203,8 @@ public sealed class LibraryTabViewModel : ObservableObject
             IsVlcBusy = false;
             VlcStatusText = "";
         }
-        SetPlayer(_vlc.ExePath);
+        if (pick)
+            SetPlayer(_vlc.ExePath);
     }
 
     /// <summary>Runs on the UI thread. A bug here must not take the app down: an unhandled exception in a dispatcher callback is fatal.</summary>

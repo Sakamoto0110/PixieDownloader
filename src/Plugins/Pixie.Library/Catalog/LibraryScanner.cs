@@ -2,20 +2,26 @@ using System.IO;
 
 namespace Pixie.Library.Catalog;
 
+/// <summary>The NTFS identity of a listed file, as the scanner's identity delegate answers it (null when the handle could not be opened).</summary>
+internal sealed record FileIdentityInfo(string? VolumeSerial, string? FileId)
+{
+    public static readonly FileIdentityInfo None = new(null, null);
+}
+
 /// <summary>What one scan is asked to do.</summary>
 internal sealed record ScanRequest(
-    IReadOnlyList<LibraryRoot> Roots,
+    ScanPlan Plan,
     IndexData Previous,
     bool Full,
-    IReadOnlySet<string> Extensions,
     IReadOnlyList<string> PriorityFiles,
-    Func<string, TagInfo?> ReadTags);
+    Func<string, TagInfo?> ReadTags,
+    Func<string, FileIdentityInfo> Identity);
 
 /// <summary>
-/// Progress of a scan. <see cref="Ready"/> carries entries the UI may show before the scan ends — the
-/// just-downloaded files, folded in first.
+/// Progress of a scan. <see cref="Ready"/> carries files the UI may show before the scan ends — the
+/// just-downloaded ones, read first.
 /// </summary>
-internal sealed record ScanProgress(string Phase, int Done, int Total, IReadOnlyList<LibraryEntry>? Ready = null);
+internal sealed record ScanProgress(string Phase, int Done, int Total, IReadOnlyList<FileNode>? Ready = null);
 
 /// <summary>The new index plus what changed to get there.</summary>
 internal sealed class ScanResult
@@ -27,114 +33,137 @@ internal sealed class ScanResult
     public int Removed { get; init; }
     public int TagsRead { get; init; }
     public int Unreadable { get; init; }
-    public IReadOnlyList<string> UnavailableRoots { get; init; } = [];
+
+    /// <summary>Sources that were not there to observe (volume off, folder gone): their trees were kept.</summary>
+    public IReadOnlyList<string> UnavailableSources { get; init; } = [];
+
+    /// <summary>Folders that could not be stamped or listed: what the index knew of them was kept (inaccessible is not empty).</summary>
+    public IReadOnlyList<string> InaccessibleDirectories { get; init; } = [];
 }
 
 /// <summary>
-/// One pass over the roots, producing the next index from the previous one. Pure in the sense that matters: it
-/// touches the file system read-only, reads tags through the delegate it is given, and returns a new
-/// <see cref="IndexData"/> instead of mutating anything.
+/// One pass over the sources of a <see cref="ScanPlan"/>, producing the next index tree from the previous one.
+/// Pure in the sense that matters: it touches the file system read-only, reads tags and identities through the
+/// delegates it is given, and returns a new <see cref="IndexData"/> instead of mutating anything.
 /// <para>
-/// Incremental by directory mtime: a directory whose mtime matches the previous index has the same direct
-/// children it had (NTFS bumps it on create/delete/rename inside), so its entries are reused without listing
-/// it and its known subdirectories are visited from the index. A directory that changed, or is new, is listed.
-/// Tags are read only for files whose (size, mtime) is not what the index has. A full scan ignores the stamps
-/// and lists everything; tags still go by identity — a file that did not change did not change its tags.
+/// Incremental by directory mtime: a folder whose mtime matches its node in the previous tree has the same
+/// direct children it had (NTFS bumps it on create/delete/rename inside), so its files are kept without listing
+/// it and its known subfolders are visited from the tree. A folder that changed, or is new, is listed. Tags are
+/// read only for files whose identity — (size, mtime, and the file id when both sides know it) — is not what
+/// the tree has. A full scan ignores the mtimes and lists everything; tags still go by identity.
 /// </para>
 /// <para>
-/// A root that is not there (drive unplugged, share offline) keeps its entries and stamps untouched and is
-/// reported in <see cref="ScanResult.UnavailableRoots"/> — nothing is forgotten because a disk is off.
+/// Only a valid observation proves absence. A source that is not there (drive unplugged, folder gone) keeps its
+/// tree and is marked <see cref="NodeStates.Unavailable"/>; a folder that cannot be stamped or listed keeps what
+/// the tree knew of it and its subtree and is marked <see cref="NodeStates.Inaccessible"/> — inaccessible is not
+/// empty. A file source whose folder exists but which is gone is a valid observation: it goes.
 /// </para>
 /// </summary>
 internal static class LibraryScanner
 {
+    /// <summary>Bumped when what a scan observes changes rule; a tree made under other rules is scanned in full. 3 = the tree.</summary>
+    public const int RulesVersion = 3;
+
     public static ScanResult Scan(ScanRequest request, IProgress<ScanProgress>? progress, CancellationToken ct)
     {
-        var previous = new Dictionary<string, LibraryEntry>(StringComparer.OrdinalIgnoreCase);
-        foreach (var e in request.Previous.Entries)
-            previous.TryAdd(e.Path, e);
-        var previousStamps = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
-        foreach (var d in request.Previous.Directories)
-            previousStamps.TryAdd(d.Path, d.Modified);
-
-        var previousByDir = previous.Values
-            .GroupBy(e => Path.GetDirectoryName(e.Path) ?? "", StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-        var previousChildDirs = previousStamps.Keys
-            .Select(p => (Parent: Path.GetDirectoryName(p) ?? "", Path: p))
-            .GroupBy(x => x.Parent, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.Path).ToList(), StringComparer.OrdinalIgnoreCase);
-
-        var current = new Dictionary<string, LibraryEntry>(StringComparer.OrdinalIgnoreCase);
-        var stamps = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
-        var found = new List<FoundFile>();
+        var previous = request.Previous;
+        var index = new IndexData
+        {
+            Extensions = request.Plan.Extensions.Select(e => e.ToLowerInvariant()).OrderBy(e => e, StringComparer.Ordinal).ToList(),
+            RulesVersion = RulesVersion,
+        };
+        var pending = new List<PendingFile>();
         var unavailable = new List<string>();
+        var inaccessible = new List<string>();
         var listed = 0;
 
-        var walker = new Walker(request, previousByDir, previousChildDirs, previousStamps, current, stamps, found, ct);
-        foreach (var root in request.Roots)
+        foreach (var source in request.Plan.FolderSources)
         {
-            var rootPath = PathUtil.Normalize(root.Path);
-            if (!Directory.Exists(rootPath))
+            ct.ThrowIfCancellationRequested();
+            var old = FindSource(previous, source.Path);
+            var tree = new SourceTree { RootPath = source.Path, Kind = SourceKinds.Folder, VolumeSerial = old?.VolumeSerial };
+            if (!SafeDirectoryExists(source.Path))
             {
-                unavailable.Add(root.Path);
-                foreach (var e in previous.Values.Where(e => PathUtil.IsUnder(e.Path, rootPath)))
-                    current.TryAdd(e.Path, e);
-                foreach (var (dir, mtime) in previousStamps.Where(s => PathUtil.IsUnder(s.Key, rootPath)))
-                    stamps.TryAdd(dir, mtime);
-                continue;
+                tree.State = NodeStates.Unavailable;
+                tree.Root = old?.Root is { } kept ? CloneDeep(kept) : new FolderNode { Name = NameOf(source.Path) };
+                unavailable.Add(source.Path);
             }
-            walker.Walk(rootPath, ref listed);
+            else
+            {
+                var walker = new Walker(request, tree, pending, inaccessible, ct);
+                tree.Root = walker.Walk(source.Path, NameOf(source.Path), old?.Root);
+                listed += walker.Listed;
+            }
+            index.Sources.Add(tree);
             progress?.Report(new ScanProgress("listando", listed, 0));
         }
 
-        // Decide, file by file, what needs its tags read: new files, and files whose identity moved.
-        var toRead = new List<FoundFile>();
-        foreach (var f in found)
-        {
-            if (current.ContainsKey(f.Path))
-                continue;   // seen twice (nested roots): the first pass decided
-            if (previous.TryGetValue(f.Path, out var old) && old.SameFileAs(f.Size, f.Modified))
-                current[f.Path] = old;
-            else
-                toRead.Add(f);
-        }
-
-        // The inbox first: what was just downloaded is what the user is waiting to see.
-        var priority = new HashSet<string>(request.PriorityFiles, StringComparer.OrdinalIgnoreCase);
-        var ordered = toRead.Where(f => priority.Contains(f.Path)).Concat(toRead.Where(f => !priority.Contains(f.Path))).ToList();
-        var priorityCount = ordered.Count(f => priority.Contains(f.Path));
-
-        int added = 0, changed = 0, unreadable = 0, done = 0;
-        var ready = new List<LibraryEntry>();
-        foreach (var f in ordered)
+        foreach (var source in request.Plan.FileSources)
         {
             ct.ThrowIfCancellationRequested();
-            var tags = SafeRead(request.ReadTags, f.Path);
+            var old = FindSource(previous, source.Path);
+            var tree = new SourceTree { RootPath = source.Path, Kind = SourceKinds.File, VolumeSerial = old?.VolumeSerial };
+            try
+            {
+                var file = new FileInfo(source.Path);
+                if (file.Exists)
+                {
+                    var identity = SafeIdentity(request.Identity, file.FullName);
+                    tree.VolumeSerial = identity.VolumeSerial ?? tree.VolumeSerial;
+                    tree.File = Observe(file, identity, old?.File, pending);
+                }
+                else if (file.Directory?.Exists != true)
+                {
+                    tree.State = NodeStates.Unavailable;   // the folder around it is not there to say: keep what we knew
+                    tree.File = old?.File?.Clone();
+                    unavailable.Add(source.Path);
+                }
+                else
+                {
+                    continue;   // the folder is there and the file is not — a valid observation, it goes
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                tree.State = NodeStates.Unavailable;
+                tree.File = old?.File?.Clone();
+                inaccessible.Add(source.Path);
+            }
+            if (tree.File is null)
+                continue;   // nothing known of an unavailable file: nothing to keep
+            index.Sources.Add(tree);
+        }
+
+        index.Attach();   // paths exist from here on: the pending files are read by them, and Ready carries nodes the tab can show
+
+        // The inbox first: what was just downloaded is what the user is waiting to see.
+        var priority = new HashSet<string>(request.PriorityFiles.Select(PathUtil.Canonical), StringComparer.Ordinal);
+        var ordered = pending.Where(p => priority.Contains(PathUtil.Canonical(p.Path))).Concat(pending.Where(p => !priority.Contains(PathUtil.Canonical(p.Path)))).ToList();
+        var priorityCount = ordered.Count(p => priority.Contains(PathUtil.Canonical(p.Path)));
+
+        int added = 0, changed = 0, unreadable = 0, done = 0;
+        var ready = new List<FileNode>();
+        foreach (var item in ordered)
+        {
+            ct.ThrowIfCancellationRequested();
+            var tags = SafeRead(request.ReadTags, item.Path);
             if (tags is null)
                 unreadable++;
-            var entry = new LibraryEntry
-            {
-                Path = f.Path,
-                Size = f.Size,
-                Modified = f.Modified,
-                Created = f.Created,
-                Title = tags?.Title,
-                Artist = tags?.Artist,
-                Album = tags?.Album,
-                Duration = tags?.DurationSeconds,
-                Bitrate = tags?.Bitrate,
-                Chapters = tags?.Chapters ?? 0,
-            };
-            current[f.Path] = entry;
-            if (previous.ContainsKey(f.Path))
+            var node = item.Node;
+            node.Title = tags?.Title;
+            node.Artist = tags?.Artist;
+            node.Album = tags?.Album;
+            node.Duration = tags?.DurationSeconds;
+            node.Bitrate = tags?.Bitrate;
+            node.Chapters = tags?.Chapters ?? 0;
+            if (item.Known)
                 changed++;
             else
                 added++;
             done++;
             if (priorityCount > 0 && done <= priorityCount)
             {
-                ready.Add(entry);
+                ready.Add(node);
                 progress?.Report(new ScanProgress("lendo tags", done, ordered.Count, done == priorityCount ? ready.ToArray() : null));
             }
             else if (done % 10 == 0 || done == ordered.Count)
@@ -143,51 +172,126 @@ internal static class LibraryScanner
             }
         }
 
-        var removed = previous.Keys.Count(k => !current.ContainsKey(k));
-        var index = new IndexData
-        {
-            ScannedAt = DateTime.UtcNow,
-            Directories = stamps.OrderBy(s => s.Key, StringComparer.OrdinalIgnoreCase).Select(s => new DirectoryStamp(s.Key, s.Value)).ToList(),
-            Entries = current.Values.OrderBy(e => e.Path, StringComparer.OrdinalIgnoreCase).ToList(),
-        };
+        var before = new HashSet<string>(previous.Entries.Select(e => PathUtil.Canonical(e.FullPath)), StringComparer.Ordinal);
+        var now = new HashSet<string>(index.Entries.Select(e => PathUtil.Canonical(e.FullPath)), StringComparer.Ordinal);
+        index.ScannedAt = DateTime.UtcNow;
         return new ScanResult
         {
             Index = index,
             Full = request.Full,
             Added = added,
             Changed = changed,
-            Removed = removed,
+            Removed = before.Count(p => !now.Contains(p)),
             TagsRead = ordered.Count,
             Unreadable = unreadable,
-            UnavailableRoots = unavailable,
+            UnavailableSources = unavailable,
+            InaccessibleDirectories = inaccessible.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList(),
         };
     }
 
     /// <summary>
-    /// The cheap question the tab asks when it opens: does any known directory look different from the index?
-    /// One <c>stat</c> per directory. A root the index has never seen counts as changed; a missing directory
-    /// counts as changed too (a drive that was there and is not).
+    /// The cheap question the tab asks when it opens: does any known folder look different from the tree? One
+    /// <c>stat</c> per folder. A folder source the tree has never seen (or saw unavailable) counts as changed if
+    /// it exists now; a folder that is missing or cannot be read does not — nothing can be observed there, and
+    /// asking again every few seconds would only spin. A file source counts as changed when its size or mtime
+    /// differ from its node, or when it is new and exists.
     /// </summary>
-    public static bool DirectoriesChanged(IndexData index, IReadOnlyList<LibraryRoot> roots)
+    public static bool DirectoriesChanged(IndexData index, ScanPlan plan)
     {
-        var known = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
-        foreach (var d in index.Directories)
-            known.TryAdd(d.Path, d.Modified);
-        foreach (var root in roots)
+        foreach (var source in plan.FolderSources)
         {
-            var path = PathUtil.Normalize(root.Path);
-            if (known.ContainsKey(path))
+            var tree = FindSource(index, source.Path);
+            if (tree?.Root is null || tree.IsUnavailable)
+            {
+                if (SafeDirectoryExists(source.Path))
+                    return true;   // a source the tree has never seen, with a folder to scan
                 continue;
-            if (Directory.Exists(path))
-                return true;   // a root the index has never seen, with a folder to scan
-            // a new root that is not there yet changes nothing
+            }
+            foreach (var folder in tree.Folders)
+            {
+                if (folder.IsInaccessible)
+                    continue;
+                try
+                {
+                    var path = folder.FullPath;
+                    if (Directory.Exists(path) && Directory.GetLastWriteTimeUtc(path) != folder.Modified)
+                        return true;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // cannot be observed right now: not a change
+                }
+            }
         }
-        foreach (var (dir, mtime) in known)
+        foreach (var source in plan.FileSources)
         {
-            if (!Directory.Exists(dir) || Directory.GetLastWriteTimeUtc(dir) != mtime)
-                return true;
+            try
+            {
+                var file = new FileInfo(source.Path);
+                if (!file.Exists)
+                    continue;
+                var node = FindSource(index, source.Path)?.File;
+                if (node is null || node.Size != file.Length || node.Modified != file.LastWriteTimeUtc)
+                    return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // idem
+            }
         }
         return false;
+    }
+
+    /// <summary>The tree was made with other extensions or other scanner rules: only a full scan brings it up to date. A tree that never came from a scan has nothing to compare.</summary>
+    public static bool RulesChanged(IndexData index, ScanPlan plan)
+    {
+        if (index.ScannedAt is null)
+            return false;
+        if (index.RulesVersion != RulesVersion)
+            return true;
+        var stored = new HashSet<string>(index.Extensions, StringComparer.OrdinalIgnoreCase);
+        return !stored.SetEquals(plan.Extensions);
+    }
+
+    /// <summary>The source tree of this path in the index, by identity of the path.</summary>
+    public static SourceTree? FindSource(IndexData index, string path)
+        => index.Sources.FirstOrDefault(s => PathUtil.IsSamePath(s.RootPath, path));
+
+    /// <summary>The name a source's root node shows: the folder's own, or the whole path for a volume root ("C:\").</summary>
+    internal static string NameOf(string path)
+    {
+        var name = Path.GetFileName(path);
+        return string.IsNullOrEmpty(name) ? path : name;
+    }
+
+    private static FileNode Observe(FileInfo file, FileIdentityInfo identity, FileNode? old, List<PendingFile> pending)
+    {
+        if (old is not null && old.SameFileAs(file.Length, file.LastWriteTimeUtc, identity.FileId))
+        {
+            var kept = old.Clone();
+            kept.Name = file.Name;
+            kept.FileId = identity.FileId ?? old.FileId;
+            return kept;
+        }
+        var fresh = new FileNode { Name = file.Name, Size = file.Length, Modified = file.LastWriteTimeUtc, Created = file.CreationTimeUtc, FileId = identity.FileId };
+        pending.Add(new PendingFile(fresh, file.FullName, old is not null));
+        return fresh;
+    }
+
+    private static FolderNode CloneDeep(FolderNode node)
+    {
+        var copy = node.CloneShallow();
+        foreach (var folder in node.Folders)
+            copy.Folders.Add(CloneDeep(folder));
+        foreach (var file in node.Files)
+            copy.Files.Add(file.Clone());
+        return copy;
+    }
+
+    private static bool SafeDirectoryExists(string path)
+    {
+        try { return Directory.Exists(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
     private static TagInfo? SafeRead(Func<string, TagInfo?> readTags, string path)
@@ -202,24 +306,29 @@ internal static class LibraryScanner
         }
     }
 
-    private sealed record FoundFile(string Path, long Size, DateTime Modified, DateTime Created);
-
-    /// <summary>The recursive walk, with the per-scan state it needs in one place.</summary>
-    private sealed class Walker(
-        ScanRequest request,
-        Dictionary<string, List<LibraryEntry>> previousByDir,
-        Dictionary<string, List<string>> previousChildDirs,
-        Dictionary<string, DateTime> previousStamps,
-        Dictionary<string, LibraryEntry> current,
-        Dictionary<string, DateTime> stamps,
-        List<FoundFile> found,
-        CancellationToken ct)
+    private static FileIdentityInfo SafeIdentity(Func<string, FileIdentityInfo> identity, string path)
     {
-        public void Walk(string dir, ref int listed)
+        try
+        {
+            return identity(path) ?? FileIdentityInfo.None;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return FileIdentityInfo.None;
+        }
+    }
+
+    /// <summary>A file whose tags are read in the second phase: the node already in the tree, where it is, and whether the previous tree had it.</summary>
+    private sealed record PendingFile(FileNode Node, string Path, bool Known);
+
+    /// <summary>The recursive walk of one folder source, with the per-scan state it needs in one place.</summary>
+    private sealed class Walker(ScanRequest request, SourceTree tree, List<PendingFile> pending, List<string> inaccessible, CancellationToken ct)
+    {
+        public int Listed { get; private set; }
+
+        public FolderNode Walk(string dir, string name, FolderNode? old)
         {
             ct.ThrowIfCancellationRequested();
-            if (stamps.ContainsKey(dir))
-                return;   // nested roots: already walked
 
             DateTime mtime;
             try
@@ -228,44 +337,62 @@ internal static class LibraryScanner
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                return;
+                return Preserve(dir, name, old);
             }
-            stamps[dir] = mtime;
 
-            if (!request.Full && previousStamps.TryGetValue(dir, out var old) && old == mtime)
+            var node = new FolderNode { Name = name, Modified = mtime };
+            if (!request.Full && old is not null && old.Modified == mtime)
             {
-                // Same direct children as last time: reuse the entries, descend into the subdirectories we knew.
-                if (previousByDir.TryGetValue(dir, out var entries))
-                    foreach (var e in entries)
-                        current.TryAdd(e.Path, e);
-                if (previousChildDirs.TryGetValue(dir, out var knownChildren))
-                    foreach (var child in knownChildren)
-                        Walk(child, ref listed);
-                return;
+                // Same direct children as last time: keep the files, descend into the subfolders we knew.
+                foreach (var file in old.Files)
+                    node.Files.Add(file.Clone());
+                foreach (var child in old.Folders)
+                    node.Folders.Add(Walk(Path.Combine(dir, child.Name), child.Name, child));
+                return node;
             }
 
+            List<FileSystemInfo> children;
             try
             {
-                var children = new DirectoryInfo(dir).EnumerateFileSystemInfos();
-                listed++;
-                foreach (var info in children)
-                {
-                    if (info is DirectoryInfo sub)
-                    {
-                        if ((sub.Attributes & (FileAttributes.ReparsePoint | FileAttributes.System)) != 0)
-                            continue;   // junctions and symlinks can loop; system folders are not music
-                        Walk(sub.FullName, ref listed);
-                    }
-                    else if (info is FileInfo file && request.Extensions.Contains(file.Extension))
-                    {
-                        found.Add(new FoundFile(file.FullName, file.Length, file.LastWriteTimeUtc, file.CreationTimeUtc));
-                    }
-                }
+                children = new DirectoryInfo(dir).EnumerateFileSystemInfos().ToList();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // a folder we cannot list is a folder with nothing in it, as far as the catalogue goes
+                return Preserve(dir, name, old);
             }
+
+            Listed++;
+            var oldFolders = old?.Folders.GroupBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            var oldFiles = old?.Files.GroupBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            foreach (var info in children)
+            {
+                if (info is DirectoryInfo sub)
+                {
+                    if ((sub.Attributes & (FileAttributes.ReparsePoint | FileAttributes.System)) != 0)
+                        continue;   // junctions and symlinks can loop; system folders are not music
+                    if (sub.Name.StartsWith(".~", StringComparison.Ordinal))
+                        continue;   // the app's own temporaries (an import being copied in)
+                    node.Folders.Add(Walk(sub.FullName, sub.Name, oldFolders?.GetValueOrDefault(sub.Name)));
+                }
+                else if (info is FileInfo file && request.Plan.Extensions.Contains(file.Extension))
+                {
+                    // The identity of every listed file is asked here (one handle each; nothing for what was not listed).
+                    var identity = SafeIdentity(request.Identity, file.FullName);
+                    tree.VolumeSerial = identity.VolumeSerial ?? tree.VolumeSerial;
+                    node.Files.Add(Observe(file, identity, oldFiles?.GetValueOrDefault(file.Name), pending));
+                }
+            }
+            return node;
+        }
+
+        /// <summary>A folder that refused to be stamped or listed: reported, and what the tree knew of it and of its subtree is kept.</summary>
+        private FolderNode Preserve(string dir, string name, FolderNode? old)
+        {
+            inaccessible.Add(dir);
+            var node = old is null ? new FolderNode { Name = name } : CloneDeep(old);
+            node.Name = name;
+            node.State = NodeStates.Inaccessible;
+            return node;
         }
     }
 }

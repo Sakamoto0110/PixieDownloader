@@ -3,60 +3,199 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Pixie.Library"
              Loaded="OnLoaded">
-    <!-- Host styles by DynamicResource (the view is built before it is in the tree); the one converter it
-         needs is WPF's own, kept here so the view stands on its own. -->
+    <!-- Host styles by DynamicResource (the view is built before it is in the tree); the converters it needs are
+         its own, kept here so the view stands on its own. -->
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
         <local:FileCountConverter x:Key="FileCount"/>
 
-        <!-- A folder header of the grouped list. An Expander on purpose: GroupItem special-cases one when the
-             list virtualises by group (it re-measures a container recycled from a collapsed folder onto an open
-             one), and its HeaderSite is what the panel measures as the header. The flag lives in the
-             FolderGroup, not here: this container comes and goes with the scroll. -->
-        <Style x:Key="FolderExpander" TargetType="Expander">
-            <Setter Property="Focusable" Value="False"/>
+        <!-- A container of the list — a folder, a group, "Tudo" — the same collapsible line for all of them: the
+             chevron, the name, the count; a group carries a thin accent on its left. The chevron flips the
+             expanded flag through the view model, which builds the rows again: the row itself never mutates. -->
+        <DataTemplate x:Key="ContainerRow" DataType="{x:Type local:LibraryRow}">
+            <Grid Margin="{Binding Indent}" Background="Transparent">
+                <Grid.ToolTip>
+                    <TextBlock Text="{Binding ToolTip}" TextWrapping="Wrap" MaxWidth="560"/>
+                </Grid.ToolTip>
+                <Grid.InputBindings>
+                    <MouseBinding MouseAction="LeftDoubleClick"
+                                  Command="{Binding DataContext.ToggleExpandCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                  CommandParameter="{Binding}"/>
+                </Grid.InputBindings>
+                <Border x:Name="bd" Background="{DynamicResource Brush.Bg.Elevated}" CornerRadius="6" Padding="10,7" Margin="0,3,0,1"
+                        BorderBrush="{DynamicResource Brush.Accent}" BorderThickness="0">
+                    <DockPanel>
+                        <ToggleButton DockPanel.Dock="Left" Focusable="False" IsChecked="{Binding IsExpanded, Mode=OneWay}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                      Command="{Binding DataContext.ToggleExpandCommand, RelativeSource={RelativeSource AncestorType=ListBox}}" CommandParameter="{Binding}"
+                                      ToolTip="Abre e fecha">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="Transparent" Padding="4,2">
+                                        <Path x:Name="arrow" Data="M 0 0 L 4 4 L 0 8" VerticalAlignment="Center" Margin="2,0"
+                                              Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="1.5" RenderTransformOrigin="0.5,0.5"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="arrow" Property="RenderTransform">
+                                                <Setter.Value>
+                                                    <RotateTransform Angle="90"/>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding Count, Converter={StaticResource FileCount}}"
+                                   Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding Subtitle}" Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"
+                                   TextTrimming="CharacterEllipsis" Foreground="{DynamicResource Brush.Warning}"/>
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                </Border>
+            </Grid>
+            <DataTemplate.Triggers>
+                <Trigger SourceName="bd" Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource Brush.Bg.Hover}"/>
+                </Trigger>
+                <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                    <Setter TargetName="bd" Property="BorderThickness" Value="3,0,0,0"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <!-- A file (or a member that went missing, dimmed): the line of the 1.1, indented by its depth -->
+        <DataTemplate x:Key="FileRow" DataType="{x:Type local:LibraryRow}">
+            <Grid x:Name="line" Margin="{Binding Indent}" Background="Transparent">
+                <Grid.ToolTip>
+                    <TextBlock Text="{Binding ToolTip}" TextWrapping="Wrap" MaxWidth="560"/>
+                </Grid.ToolTip>
+                <Grid.InputBindings>
+                    <MouseBinding MouseAction="LeftDoubleClick"
+                                  Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                  CommandParameter="{Binding}"/>
+                </Grid.InputBindings>
+                <!-- Fixed widths on purpose: shared size groups in a virtualised list re-measure every realised row -->
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="52"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="76"/>
+                    <ColumnDefinition Width="72"/>
+                    <ColumnDefinition Width="86"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- The extension, always: it is what tells a GIF from a mix at a glance -->
+                <Border Grid.Column="0" CornerRadius="4" Padding="6,2" Margin="6,4,10,4" VerticalAlignment="Center" HorizontalAlignment="Left" MinWidth="42"
+                        Background="{DynamicResource Brush.Bg.Elevated}">
+                    <TextBlock Text="{Binding Extension}" FontFamily="{DynamicResource Font.Mono}" FontSize="10" HorizontalAlignment="Center"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"/>
+                </Border>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,4">
+                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Subtitle}" Style="{DynamicResource Hint}" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+
+                <!-- A mix with its tracklist written in -->
+                <Border Grid.Column="2" CornerRadius="4" Padding="6,2" Margin="10,0,0,0" VerticalAlignment="Center"
+                        Background="{DynamicResource Brush.Accent.Subtle}"
+                        Visibility="{Binding HasChapters, Converter={StaticResource BoolToVis}}"
+                        ToolTip="Capítulos ID3 no arquivo — VLC, foobar2000 e mpv mostram">
+                    <TextBlock Text="{Binding ChaptersText}" FontSize="11" Foreground="{DynamicResource Brush.Text.Primary}"/>
+                </Border>
+
+                <TextBlock Grid.Column="3" Text="{Binding DurationText}" FontFamily="{DynamicResource Font.Mono}" FontSize="12"
+                           Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center" Margin="12,0,0,0" TextAlignment="Right"/>
+                <TextBlock Grid.Column="4" Text="{Binding SizeText}" Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0" TextAlignment="Right"/>
+                <TextBlock Grid.Column="5" Text="{Binding AddedText}" Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0" TextAlignment="Right"/>
+
+                <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,4,6,4">
+                    <Button Content="Abrir" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="0,0,6,0"
+                            Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                            CommandParameter="{Binding}" ToolTip="Abre no player escolhido (duplo clique na linha faz o mesmo)"/>
+                    <Button Content="Pasta" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12"
+                            Command="{Binding DataContext.ShowInFolderCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                            CommandParameter="{Binding}" ToolTip="Mostra o arquivo no Explorer"/>
+                </StackPanel>
+            </Grid>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsDimmed}" Value="True">
+                    <Setter TargetName="line" Property="Opacity" Value="0.5"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <local:RowTemplateSelector x:Key="RowTemplates" Container="{StaticResource ContainerRow}" File="{StaticResource FileRow}"/>
+
+        <!-- The menus (the row's context menu, "Adicionar ▾") in the host's drop-down look: WPF's own would be
+             white. A MenuItem template of its own because the default one carries the light theme with it. -->
+        <Style x:Key="LibraryMenuItem" TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource Font.Family}"/>
+            <Setter Property="FontSize" Value="{DynamicResource Font.Body}"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="Expander">
-                        <DockPanel>
-                            <ToggleButton x:Name="HeaderSite" DockPanel.Dock="Top" Focusable="False"
-                                          IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
-                                          ToolTip="{Binding Name.Directory}">
-                                <ToggleButton.Template>
-                                    <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="bd" Background="{DynamicResource Brush.Bg.Elevated}" CornerRadius="6" Padding="10,7" Margin="0,3,0,1">
-                                            <DockPanel>
-                                                <Path x:Name="arrow" DockPanel.Dock="Left" Data="M 0 0 L 4 4 L 0 8" VerticalAlignment="Center" Margin="2,0,12,0"
-                                                      Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="1.5" RenderTransformOrigin="0.5,0.5"/>
-                                                <TextBlock DockPanel.Dock="Right" Text="{Binding ItemCount, Converter={StaticResource FileCount}}"
-                                                           Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"/>
-                                                <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
-                                                    <Run Text="{Binding Name.Prefix, Mode=OneWay}" Foreground="{DynamicResource Brush.Text.Secondary}"/><Run Text="{Binding Name.Title, Mode=OneWay}" FontWeight="SemiBold"/>
-                                                </TextBlock>
-                                            </DockPanel>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource Brush.Bg.Hover}"/>
-                                            </Trigger>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter TargetName="arrow" Property="RenderTransform">
-                                                    <Setter.Value>
-                                                        <RotateTransform Angle="90"/>
-                                                    </Setter.Value>
-                                                </Setter>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </ToggleButton.Template>
-                            </ToggleButton>
-                            <ContentPresenter x:Name="ExpandSite" Visibility="Collapsed" Focusable="False"/>
-                        </DockPanel>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="bd" Background="Transparent" CornerRadius="4" Padding="10,6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="16"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="check" Text="✓" Visibility="Hidden" VerticalAlignment="Center" FontSize="11" Foreground="{DynamicResource Brush.Accent.Primary}"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header" VerticalAlignment="Center" RecognizesAccessKey="True" Margin="4,0,0,0"/>
+                                <Path x:Name="arrow" Grid.Column="2" Data="M 0 0 L 4 4 L 0 8" Visibility="Collapsed" Margin="14,0,0,0" VerticalAlignment="Center"
+                                      Stroke="{DynamicResource Brush.Text.Secondary}" StrokeThickness="1.5"/>
+                                <Popup x:Name="PART_Popup" Placement="Right" HorizontalOffset="4" IsOpen="{TemplateBinding IsSubmenuOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                    <Border Background="{DynamicResource Brush.Bg.Elevated}" BorderBrush="{DynamicResource Brush.Border.Default}" BorderThickness="1" CornerRadius="6" Padding="6" MinWidth="180">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="420">
+                                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsExpanded" Value="True">
-                                <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible"/>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource Brush.Accent.Subtle}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="check" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="True">
+                                <Setter TargetName="arrow" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="LibraryMenuSeparator" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Margin="6,4" Background="{DynamicResource Brush.Border.Subtle}"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="LibraryMenu" TargetType="ContextMenu">
+            <Setter Property="Background" Value="{DynamicResource Brush.Bg.Elevated}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Default}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="6" MinWidth="200">
+                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -68,12 +207,32 @@
             <!-- Header: title, then the actions that touch the catalogue as a whole -->
             <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <!-- Only when the portable VLC in tools\vlc is behind; while it downloads, the label is the progress -->
+                    <Button Content="{Binding VlcUpdateLabel}" Style="{DynamicResource GhostButton}" Padding="10,5" Margin="0,0,6,0"
+                            Command="{Binding UpdateVlcCommand}" ToolTip="{Binding VlcUpdateToolTip}" ToolTipService.ShowOnDisabled="True"
+                            Visibility="{Binding HasVlcUpdate, Converter={StaticResource BoolToVis}}"/>
                     <Button Content="Sincronizar" Style="{DynamicResource GhostButton}" Padding="10,5" Margin="0,0,6,0"
                             Command="{Binding SyncCommand}"
                             ToolTip="Lista todas as pastas de novo e lê as tags do que mudou (abrir a aba já sincroniza o que os mtimes apontam; isto é a varredura completa)"/>
-                    <Button Content="Adicionar pasta" Style="{DynamicResource GhostButton}" Padding="10,5" Margin="0,0,6,0"
-                            Command="{Binding AddRootCommand}"
-                            ToolTip="Uma pasta real entra como pasta nomeada do catálogo; tudo abaixo dela é listado"/>
+                    <Button x:Name="AddButton" Content="Adicionar ▾" Style="{DynamicResource GhostButton}" Padding="10,5" Margin="0,0,6,0" Click="OnAddClick"
+                            ToolTip="Pastas e arquivos que ficam onde estão, cópias pra pasta da biblioteca, uma pasta nova, um grupo">
+                        <Button.ContextMenu>
+                            <ContextMenu Placement="Bottom" Style="{StaticResource LibraryMenu}">
+                                <ContextMenu.Resources>
+                                    <Style TargetType="MenuItem" BasedOn="{StaticResource LibraryMenuItem}"/>
+                                    <Style TargetType="Separator" BasedOn="{StaticResource LibraryMenuSeparator}"/>
+                                </ContextMenu.Resources>
+                                <MenuItem Header="Adicionar pasta…" Command="{Binding AddFolderCommand}" ToolTip="Uma pasta real entra como pasta da biblioteca; tudo abaixo dela é listado; ela fica onde está"/>
+                                <MenuItem Header="Adicionar arquivos…" Command="{Binding AddFilesCommand}" ToolTip="Arquivos que ficam onde estão"/>
+                                <Separator/>
+                                <MenuItem Header="Importar arquivos…" Command="{Binding ImportFilesCommand}" ToolTip="Copia os arquivos pra uma pasta dentro da pasta da biblioteca; os originais ficam intactos"/>
+                                <MenuItem Header="Importar pasta…" Command="{Binding ImportFolderCommand}" ToolTip="Copia a pasta inteira pra dentro da pasta da biblioteca; a original fica intacta"/>
+                                <Separator/>
+                                <MenuItem Header="Criar pasta…" Command="{Binding CreateFolderCommand}" ToolTip="Uma pasta de verdade, na pasta da biblioteca"/>
+                                <MenuItem Header="Criar grupo…" Command="{Binding CreateGroupCommand}" ToolTip="Um grupo: organização só do catálogo, nada no disco"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                     <ToggleButton Content="Opções" Style="{DynamicResource GhostToggleButton}" Padding="10,5"
                                   IsChecked="{Binding ShowSettings, Mode=TwoWay}"
                                   ToolTip="Player, pastas, extensões"/>
@@ -83,9 +242,30 @@
 
             <!-- Status line and, when there is something to say, the warning -->
             <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}" Style="{DynamicResource Hint}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <TextBlock DockPanel.Dock="Top" Text="{Binding ImportStatusText}" Style="{DynamicResource Hint}" Margin="0,0,0,8"
+                       Visibility="{Binding IsImporting, Converter={StaticResource BoolToVis}}"/>
             <TextBlock DockPanel.Dock="Top" Text="{Binding WarningText}" TextWrapping="Wrap" Margin="0,0,0,8" FontSize="12"
                        Foreground="{DynamicResource Brush.Warning}"
                        Visibility="{Binding HasWarning, Converter={StaticResource BoolToVis}}"/>
+
+            <!-- The name band: a new folder, a new group, a renamed group -->
+            <Border DockPanel.Dock="Top" Margin="0,0,0,8" Padding="10,7" CornerRadius="6" Background="{DynamicResource Brush.Accent.Subtle}"
+                    Visibility="{Binding ShowNamePrompt, Converter={StaticResource BoolToVis}}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding NamePromptTitle}" VerticalAlignment="Center" FontSize="12" Margin="0,0,10,0"/>
+                    <Button DockPanel.Dock="Right" Content="Cancelar" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12"
+                            Command="{Binding NamePromptCancelCommand}"/>
+                    <Button DockPanel.Dock="Right" Content="Ok" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="6,0,6,0"
+                            Command="{Binding NamePromptOkCommand}"/>
+                    <TextBox x:Name="NameBox" Text="{Binding NamePromptText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" MaxWidth="360" HorizontalAlignment="Left" MinWidth="200"
+                             IsVisibleChanged="OnNameBoxVisibleChanged">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Return" Command="{Binding NamePromptOkCommand}"/>
+                            <KeyBinding Key="Escape" Command="{Binding NamePromptCancelCommand}"/>
+                        </TextBox.InputBindings>
+                    </TextBox>
+                </DockPanel>
+            </Border>
 
             <!-- Options: the player, what happens on its own, the extras — and the selected folder -->
             <Border DockPanel.Dock="Top" Margin="0,0,0,10" Padding="12,10" CornerRadius="6"
@@ -136,11 +316,11 @@
                         </DockPanel>
                     </Border>
                     <CheckBox IsChecked="{Binding AutoAddRoots, Mode=TwoWay}" Margin="0,0,0,4"
-                              Content="Um download numa pasta fora do catálogo coloca essa pasta no catálogo"
-                              ToolTip="Desligado, o download fora das pastas cadastradas fica de fora (vai pro log)"/>
+                              Content="Auto-adicionar pastas"
+                              ToolTip="Um download numa pasta fora da biblioteca põe essa pasta na biblioteca. Desligado, ele fica de fora (vai pro log)"/>
                     <CheckBox IsChecked="{Binding AutoSync, Mode=TwoWay}" Margin="0,0,0,8"
-                              Content="Abrir a aba confere as pastas e sincroniza o que mudou"
-                              ToolTip="Desligado, só o botão Sincronizar varre — o que baixar continua entrando na hora"/>
+                              Content="Autosync"
+                              ToolTip="Abrir a aba confere as pastas e sincroniza o que mudou. Desligado, só o botão Sincronizar varre — o que baixar continua entrando na hora"/>
                     <DockPanel Margin="0,0,0,0">
                         <TextBlock DockPanel.Dock="Left" Text="Outras extensões:" Style="{DynamicResource Label}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <TextBlock DockPanel.Dock="Right" Text="além de áudio (mp3, m4a, flac, wav, ogg, opus…) e vídeo (mp4, mkv, webm, mov…)"
@@ -149,7 +329,7 @@
                                  ToolTip="Separadas por vírgula, ex.: gif, webp — mudar refaz a varredura"/>
                     </DockPanel>
 
-                    <!-- The selected folder -->
+                    <!-- The selected folder: a source can be renamed, opened, taken out; the storage root only changed -->
                     <Border Margin="0,10,0,0" Padding="0,10,0,0" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,1,0,0"
                             Visibility="{Binding HasSelectedRoot, Converter={StaticResource BoolToVis}}">
                         <StackPanel>
@@ -172,18 +352,29 @@
                             </DockPanel>
                         </StackPanel>
                     </Border>
+                    <Border Margin="0,10,0,0" Padding="0,10,0,0" BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,1,0,0"
+                            Visibility="{Binding HasSelectedStorageRoot, Converter={StaticResource BoolToVis}}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Mudar diretório padrão…" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12"
+                                    Command="{Binding ChangeStorageRootCommand}" ToolTip="A pasta da biblioteca: pra onde Importar copia e onde Criar pasta cria. Só a configuração muda; nada é movido."/>
+                            <Button DockPanel.Dock="Right" Content="Abrir pasta" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="0,0,6,0"
+                                    Command="{Binding OpenRootFolderCommand}"/>
+                            <TextBlock Text="{Binding SelectedRootPath}" Style="{DynamicResource Hint}" FontFamily="{DynamicResource Font.Mono}" FontSize="11"
+                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        </DockPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 
-            <!-- Empty state: no folder yet -->
+            <!-- Empty state: nothing in the library yet -->
             <StackPanel DockPanel.Dock="Top" Margin="0,24,0,12" HorizontalAlignment="Center"
                         Visibility="{Binding ShowEmptyState, Converter={StaticResource BoolToVis}}">
-                <TextBlock Text="Nenhuma pasta no catálogo." Style="{DynamicResource Hint}" HorizontalAlignment="Center"/>
-                <TextBlock Text="Adicione uma pasta — ou baixe alguma coisa: a pasta de saída do download entra sozinha."
+                <TextBlock Text="Nada na biblioteca ainda." Style="{DynamicResource Hint}" HorizontalAlignment="Center"/>
+                <TextBlock Text="A pasta Music já é observada. Adicione outra pasta — ou baixe alguma coisa: a pasta de saída do download entra sozinha."
                            Style="{DynamicResource Hint}" HorizontalAlignment="Center" Margin="0,4,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
-            <DockPanel Visibility="{Binding HasRoots, Converter={StaticResource BoolToVis}}">
+            <DockPanel>
                 <!-- Folders as toggles, with counts; the first one is everything -->
                 <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Roots}" Margin="0,0,0,6">
                     <ItemsControl.ItemsPanel>
@@ -229,10 +420,10 @@
                     <ComboBox Grid.Column="1" ItemsSource="{Binding KindOptions}" SelectedItem="{Binding SelectedKind, Mode=TwoWay}"
                               DisplayMemberPath="Label" MinWidth="96" Margin="10,0,0,0" ToolTip="Tipo de arquivo"/>
                     <ComboBox Grid.Column="2" ItemsSource="{Binding SortOptions}" SelectedItem="{Binding SelectedSort, Mode=TwoWay}"
-                              DisplayMemberPath="Label" MinWidth="110" Margin="6,0,0,0" ToolTip="Ordem (dentro de cada pasta, quando agrupado)"/>
+                              DisplayMemberPath="Label" MinWidth="110" Margin="6,0,0,0" ToolTip="Ordem (dentro de cada pasta e de cada grupo, quando agrupado)"/>
                     <ToggleButton Grid.Column="3" Content="Pastas" Style="{DynamicResource GhostToggleButton}" Padding="10,5" FontSize="12" Margin="6,0,0,0"
                                   IsChecked="{Binding GroupByFolder, Mode=TwoWay}"
-                                  ToolTip="Agrupa por pasta: cada pasta é um cabeçalho que abre e fecha (fechadas de início; buscar abre todas). Desligado, uma lista só na ordem escolhida."/>
+                                  ToolTip="Pastas e grupos como cabeçalhos que abrem e fecham (fechados de início; buscar abre todos). Desligado, uma lista só de arquivos na ordem escolhida."/>
                 </Grid>
 
                 <!-- Footer: what the list is showing right now -->
@@ -242,93 +433,20 @@
                     <TextBlock Text="Nada com esse filtro." Style="{DynamicResource Hint}" HorizontalAlignment="Center" Margin="0,24,0,0"
                                Visibility="{Binding ShowNoMatches, Converter={StaticResource BoolToVis}}"/>
 
-                    <!-- Virtualised over the whole catalogue, by group when grouped; the view does the filter, the sort
-                         and the grouping. The group's Name is the FolderGroup shared by its rows, so the header binds
-                         through it and the expanded flag survives the container. -->
-                    <ListBox x:Name="FileList" ItemsSource="{Binding RowsView}"
+                    <!-- The single list, virtualised over what is open: containers and files, each the row its template
+                         makes. Selection is the list box's (several at once); the context menu is built for the row
+                         under the mouse; a drag of the selection would land on a group, and is off for now
+                         (LibraryView.DragAndDropEnabled). -->
+                    <ListBox x:Name="FileList" ItemsSource="{Binding Rows}" ItemTemplateSelector="{StaticResource RowTemplates}"
+                             SelectionMode="Extended" AllowDrop="{x:Static local:LibraryView.DragAndDropEnabled}"
                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                             VirtualizingPanel.IsVirtualizingWhenGrouping="True"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <ListBox.GroupStyle>
-                            <GroupStyle>
-                                <GroupStyle.Panel>
-                                    <ItemsPanelTemplate>
-                                        <VirtualizingStackPanel/>
-                                    </ItemsPanelTemplate>
-                                </GroupStyle.Panel>
-                                <GroupStyle.ContainerStyle>
-                                    <Style TargetType="GroupItem">
-                                        <Setter Property="Template">
-                                            <Setter.Value>
-                                                <ControlTemplate TargetType="GroupItem">
-                                                    <Expander Style="{StaticResource FolderExpander}" IsExpanded="{Binding Name.IsExpanded, Mode=TwoWay}">
-                                                        <ItemsPresenter Margin="0,2,0,4"/>
-                                                    </Expander>
-                                                </ControlTemplate>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </GroupStyle.ContainerStyle>
-                            </GroupStyle>
-                        </ListBox.GroupStyle>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate DataType="{x:Type local:LibraryRow}">
-                                <Grid Margin="6,4" Background="Transparent">
-                                    <Grid.ToolTip>
-                                        <TextBlock Text="{Binding ToolTip}" TextWrapping="Wrap" MaxWidth="560"/>
-                                    </Grid.ToolTip>
-                                    <Grid.InputBindings>
-                                        <MouseBinding MouseAction="LeftDoubleClick"
-                                                      Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                      CommandParameter="{Binding}"/>
-                                    </Grid.InputBindings>
-                                    <!-- Fixed widths on purpose: shared size groups in a virtualised list re-measure every realised row -->
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="52"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="76"/>
-                                        <ColumnDefinition Width="72"/>
-                                        <ColumnDefinition Width="86"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-
-                                    <!-- The extension, always: it is what tells a GIF from a mix at a glance -->
-                                    <Border Grid.Column="0" CornerRadius="4" Padding="6,2" Margin="0,0,10,0" VerticalAlignment="Center" HorizontalAlignment="Left" MinWidth="42"
-                                            Background="{DynamicResource Brush.Bg.Elevated}">
-                                        <TextBlock Text="{Binding Extension}" FontFamily="{DynamicResource Font.Mono}" FontSize="10" HorizontalAlignment="Center"
-                                                   Foreground="{DynamicResource Brush.Text.Secondary}"/>
-                                    </Border>
-
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding Subtitle}" Style="{DynamicResource Hint}" TextTrimming="CharacterEllipsis"/>
-                                    </StackPanel>
-
-                                    <!-- A mix with its tracklist written in -->
-                                    <Border Grid.Column="2" CornerRadius="4" Padding="6,2" Margin="10,0,0,0" VerticalAlignment="Center"
-                                            Background="{DynamicResource Brush.Accent.Subtle}"
-                                            Visibility="{Binding HasChapters, Converter={StaticResource BoolToVis}}"
-                                            ToolTip="Capítulos ID3 no arquivo — VLC, foobar2000 e mpv mostram">
-                                        <TextBlock Text="{Binding ChaptersText}" FontSize="11" Foreground="{DynamicResource Brush.Text.Primary}"/>
-                                    </Border>
-
-                                    <TextBlock Grid.Column="3" Text="{Binding DurationText}" FontFamily="{DynamicResource Font.Mono}" FontSize="12"
-                                               Foreground="{DynamicResource Brush.Text.Secondary}" VerticalAlignment="Center" Margin="12,0,0,0" TextAlignment="Right"/>
-                                    <TextBlock Grid.Column="4" Text="{Binding SizeText}" Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0" TextAlignment="Right"/>
-                                    <TextBlock Grid.Column="5" Text="{Binding AddedText}" Style="{DynamicResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0" TextAlignment="Right"/>
-
-                                    <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-                                        <Button Content="Abrir" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12" Margin="0,0,6,0"
-                                                Command="{Binding DataContext.OpenCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                CommandParameter="{Binding}" ToolTip="Abre no player escolhido (duplo clique na linha faz o mesmo)"/>
-                                        <Button Content="Pasta" Style="{DynamicResource GhostButton}" Padding="8,3" FontSize="12"
-                                                Command="{Binding DataContext.ShowInFolderCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                CommandParameter="{Binding}" ToolTip="Mostra o arquivo no Explorer"/>
-                                    </StackPanel>
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="OnSelectionChanged" ContextMenuOpening="OnContextMenuOpening"
+                             PreviewMouseLeftButtonDown="OnListMouseDown" PreviewMouseMove="OnListMouseMove"
+                             DragOver="OnListDragOver" Drop="OnListDrop">
+                        <ListBox.ContextMenu>
+                            <ContextMenu/>
+                        </ListBox.ContextMenu>
                     </ListBox>
                 </Grid>
             </DockPanel>

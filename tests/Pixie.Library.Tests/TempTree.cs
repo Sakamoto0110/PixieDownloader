@@ -1,4 +1,6 @@
 using System.IO;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Pixie.Library.Catalog;
 
 namespace Pixie.Library.Tests;
@@ -6,6 +8,8 @@ namespace Pixie.Library.Tests;
 /// <summary>A throw-away folder under %TEMP% with helpers to grow a fake music collection in it.</summary>
 public sealed class TempTree : IDisposable
 {
+    private readonly List<(string Dir, FileSystemRights Rights)> _denied = [];
+
     public TempTree(string? name = null)
     {
         Root = Path.Combine(Path.GetTempPath(), "pixie-library-tests", (name ?? "t") + "-" + Guid.NewGuid().ToString("N"));
@@ -37,6 +41,13 @@ public sealed class TempTree : IDisposable
         return path;
     }
 
+    public string Dir(string relative)
+    {
+        var path = Full(relative);
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
     public string Full(string relative) => Path.Combine(Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
     /// <summary>
@@ -58,8 +69,40 @@ public sealed class TempTree : IDisposable
         return Directory.GetLastWriteTimeUtc(dir) != previous;
     }
 
+    /// <summary>Denies the current user the right to list <paramref name="relative"/> (the B5 case: a folder that exists and refuses).</summary>
+    public void DenyListing(string relative) => Deny(relative, FileSystemRights.ListDirectory);
+
+    public void AllowListing(string relative) => Allow(relative, FileSystemRights.ListDirectory);
+
+    /// <summary>Denies the current user creating anything in <paramref name="relative"/> (the permission-fallback case: a storage root that refuses a write).</summary>
+    public void DenyWriting(string relative) => Deny(relative, FileSystemRights.CreateFiles | FileSystemRights.CreateDirectories);
+
+    private void Deny(string relative, FileSystemRights rights)
+    {
+        var dir = new DirectoryInfo(Full(relative));
+        var security = dir.GetAccessControl();
+        security.AddAccessRule(new FileSystemAccessRule(CurrentUser, rights, AccessControlType.Deny));
+        dir.SetAccessControl(security);
+        _denied.Add((dir.FullName, rights));
+    }
+
+    private void Allow(string relative, FileSystemRights rights)
+    {
+        var dir = new DirectoryInfo(Full(relative));
+        var security = dir.GetAccessControl();
+        security.RemoveAccessRule(new FileSystemAccessRule(CurrentUser, rights, AccessControlType.Deny));
+        dir.SetAccessControl(security);
+        _denied.RemoveAll(d => d.Dir == dir.FullName && d.Rights == rights);
+    }
+
+    private static SecurityIdentifier CurrentUser => WindowsIdentity.GetCurrent().User!;
+
     public void Dispose()
     {
+        foreach (var (dir, rights) in _denied.ToArray())
+        {
+            try { Allow(Path.GetRelativePath(Root, dir), rights); } catch { /* best effort */ }
+        }
         try { Directory.Delete(Root, recursive: true); } catch { /* best effort */ }
     }
 }

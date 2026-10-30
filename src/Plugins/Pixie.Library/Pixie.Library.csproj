@@ -1,10 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Module 2 of docs/ROADMAP.md — Library, the catalogue of what is already on disk: named folders pointing -->
-  <!-- at real ones, an index of every audio/video file under them (tags read once, re-read only where the file -->
-  <!-- changed), a "Biblioteca" tab with search and sort, and "open in the player you chose" instead of a player -->
-  <!-- of its own. What the app downloads joins the catalogue by itself. Installed as plugins/library/ next to -->
-  <!-- the exe; released on its own (tag library-vX.Y.Z -> the repository's `plugins` release). -->
+  <!-- Module 2 of docs/ROADMAP.md — Library, the catalogue of what is already on disk, on the model of -->
+  <!-- docs/library-model.md: the Music folder (or the one chosen) plus the folders and files added as sources, -->
+  <!-- scanned into an index tree (tags read once, re-read only where the file changed); a manifest with what -->
+  <!-- the disk does not know — the sources, the groups and which items belong to which; a reconciler that joins -->
+  <!-- the two with the file system; a "Biblioteca" tab that is one list of folders, groups and files, with -->
+  <!-- search and sort, and "open in the player you chose" instead of a player of its own. What the app -->
+  <!-- downloads joins the catalogue by itself. Installed as plugins/library/ next to the exe; released on its -->
+  <!-- own (tag library-vX.Y.Z -> the repository's `plugins` release). -->
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
@@ -14,9 +17,9 @@
     <!-- No plugin.json: the host reads id (folder), name, version, apiVersion and the entry class from the -->
     <!-- assembly's metadata. So this is the plugin's version, AssemblyTitle is what the Plugins tab shows, and -->
     <!-- Description is what the store ("Plugins oficiais") shows — release-plugin.ps1 copies it into plugins.json. -->
-    <Version>1.1.0</Version>
+    <Version>2.0.0</Version>
     <AssemblyTitle>Library</AssemblyTitle>
-    <Description>Catálogo do que já está em disco: pastas nomeadas que abrem e fecham, busca por título/artista/arquivo, e abre no player que você escolher — ou no VLC, que ela baixa pra você. O que o app baixa entra sozinho.</Description>
+    <Description>Catálogo do que já está em disco, numa lista só: a pasta Music (ou a que você escolher) e as pastas e arquivos que você adicionar, com as pastas de verdade abrindo e fechando, mais grupos — organização só do catálogo, aninhados, um arquivo em quantos grupos quiser. Importar copia pra pasta da biblioteca; Adicionar deixa onde está; Mover fisicamente é a única coisa que mexe no disco. Busca por título/artista/arquivo, e abre no player que você escolher — ou no VLC, que ela baixa pra você. O que o app baixa entra sozinho; o que sumiu ou mudou de lugar é dito, nunca apagado.</Description>
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
 

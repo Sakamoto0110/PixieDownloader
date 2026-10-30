@@ -4,27 +4,35 @@ using System.Text.Json;
 namespace Pixie.Library.Catalog;
 
 /// <summary>
-/// The plugin's files under <c>data/library/</c>: the index (data, written whole once per sync) and the inbox
-/// (the download cache — one small block per delivered file, waiting to be folded into the index).
+/// The plugin's files under <c>data\library\</c>, versioned by name so a 1.x and a 2.x never touch each other's:
+/// <c>manifest.v2.json</c> (owned by <see cref="LibraryManifest"/>), <c>index.v2.json</c> (the tree, written
+/// whole once per sync), <c>inbox.v2\</c> (the download cache — one small block per delivered file, waiting
+/// to be folded into the index). <c>manifest.json</c>, <c>index.json</c> and <c>inbox\</c> belong to the 1.x;
+/// the 2.x reads the first and the last, once, to migrate, and never writes them.
 /// </summary>
 internal sealed class LibraryStore
 {
     public LibraryStore(string dataDirectory)
     {
         DataDirectory = dataDirectory;
-        ManifestPath = Path.Combine(dataDirectory, "manifest.json");
-        IndexPath = Path.Combine(dataDirectory, "index.json");
-        Inbox = new Inbox(Path.Combine(dataDirectory, "inbox"));
+        ManifestPath = Path.Combine(dataDirectory, "manifest.v2.json");
+        LegacyManifestPath = Path.Combine(dataDirectory, "manifest.json");
+        IndexPath = Path.Combine(dataDirectory, "index.v2.json");
+        LegacyInboxDirectory = Path.Combine(dataDirectory, "inbox");
+        Inbox = new Inbox(Path.Combine(dataDirectory, "inbox.v2"));
     }
 
     public string DataDirectory { get; }
     public string ManifestPath { get; }
+    public string LegacyManifestPath { get; }
     public string IndexPath { get; }
+    public string LegacyInboxDirectory { get; }
     public Inbox Inbox { get; }
 
     /// <summary>
-    /// The index as last written. Missing → empty. Unreadable → set aside as <c>index.json.bad</c> and empty,
-    /// which makes the next scan see every file as new — the same as a full sync, no flag needed.
+    /// The index as last written. Missing → empty. Unreadable, from another schema (older or newer: the tree is
+    /// rebuilt, never converted) → set aside as <c>index.v2.json.bad</c> and empty, which makes the next scan see
+    /// every file as new — the same as a full sync, no flag needed. Never touches the manifest.
     /// </summary>
     public IndexData ReadIndex(Action<string>? warn = null)
     {
@@ -35,13 +43,15 @@ internal sealed class LibraryStore
             var data = JsonSerializer.Deserialize<IndexData>(File.ReadAllText(IndexPath), LibraryJson.Index);
             if (data is null)
                 throw new JsonException("vazio");
-            data.Entries.RemoveAll(e => string.IsNullOrEmpty(e?.Path));
-            data.Directories.RemoveAll(d => string.IsNullOrEmpty(d?.Path));
+            if (data.SchemaVersion != IndexData.CurrentSchema)
+                throw new JsonException($"schema {data.SchemaVersion}, este plugin escreve o {IndexData.CurrentSchema}");
+            data.Sources.RemoveAll(s => s is null || string.IsNullOrEmpty(s.RootPath) || (s.Root is null && s.File is null));
+            data.Attach();
             return data;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            warn?.Invoke($"index.json ilegível ({ex.Message}); guardado como index.json.bad — a próxima varredura refaz tudo");
+            warn?.Invoke($"index.v2.json ilegível ({ex.Message}); guardado como index.v2.json.bad — a próxima varredura refaz tudo");
             try { File.Move(IndexPath, IndexPath + ".bad", overwrite: true); } catch { /* the next write replaces it */ }
             return new IndexData();
         }
