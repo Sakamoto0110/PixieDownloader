@@ -60,7 +60,7 @@ internal sealed class VlcInstaller
             try
             {
                 var info = FileVersionInfo.GetVersionInfo(ExePath);
-                var v = info.ProductVersion ?? info.FileVersion;
+                var v = info.FileVersion ?? info.ProductVersion;   // VLC's ProductVersion is "3,0,23,0"
                 return string.IsNullOrWhiteSpace(v) ? null : v.Trim();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -72,11 +72,60 @@ internal sealed class VlcInstaller
 
     public static Uri ArchiveUrl(string version) => new($"https://download.videolan.org/pub/videolan/vlc/{version}/win64/vlc-{version}-win64.zip");
 
+    /// <summary>The version VideoLAN calls current, or <see langword="null"/> when the answer does not look like one.</summary>
+    public async Task<string?> LatestVersionAsync(CancellationToken ct)
+        => ParseVersion(await _http.GetStringAsync(StatusUrl, ct).ConfigureAwait(false));
+
+    /// <summary>Whether a <c>vlc.exe</c> out of <see cref="Directory"/> is running: the folder cannot be swapped from under it.</summary>
+    public bool IsRunning()
+    {
+        var directory = Path.GetFullPath(Directory) + Path.DirectorySeparatorChar;
+        var running = false;
+        foreach (var process in Process.GetProcessesByName("vlc"))
+        {
+            using (process)
+            {
+                try
+                {
+                    running |= process.MainModule?.FileName is { } exe && Path.GetFullPath(exe).StartsWith(directory, StringComparison.OrdinalIgnoreCase);
+                }
+                catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+                {
+                    // another user's VLC, or one that just exited: not ours to wait for
+                }
+            }
+        }
+        return running;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="latest"/> is past <paramref name="installed"/>, by the numbers only ("3.0.23" is
+    /// "3,0,23,0"). An installed version that cannot be read is not called old: no button for a guess.
+    /// </summary>
+    internal static bool IsNewer(string latest, string? installed)
+        => Numbers(latest) is { } l && installed is not null && Numbers(installed) is { } i && l.CompareTo(i) > 0;
+
+    private static readonly Regex LeadingVersion = new(@"^\s*(\d+)(?:[.,](\d+))?(?:[.,](\d+))?(?:[.,](\d+))?", RegexOptions.Compiled);
+
+    private static Version? Numbers(string text)
+    {
+        var m = LeadingVersion.Match(text);
+        if (!m.Success)
+            return null;
+        var parts = new int[4];
+        for (var g = 1; g <= 4; g++)
+        {
+            if (m.Groups[g].Success && !int.TryParse(m.Groups[g].Value, NumberStyles.None, CultureInfo.InvariantCulture, out parts[g - 1]))
+                return null;
+        }
+        return new Version(parts[0], parts[1], parts[2], parts[3]);
+    }
+
     /// <summary>Downloads, checks, extracts and swaps the new folder in. Returns the version installed.</summary>
     public async Task<string> InstallAsync(IProgress<VlcProgress>? progress, CancellationToken ct)
     {
         progress?.Report(new("procurando a versão", null));
-        var version = ParseVersion(await _http.GetStringAsync(StatusUrl, ct).ConfigureAwait(false))
+        var version = await LatestVersionAsync(ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException("não entendi a resposta do update.videolan.org");
         var archive = ArchiveUrl(version);
         var expected = ParseSha256(await _http.GetStringAsync(archive + ".sha256", ct).ConfigureAwait(false))

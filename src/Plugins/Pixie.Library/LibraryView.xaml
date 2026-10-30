@@ -207,6 +207,10 @@
             <!-- Header: title, then the actions that touch the catalogue as a whole -->
             <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <!-- Only when the portable VLC in tools\vlc is behind; while it downloads, the label is the progress -->
+                    <Button Content="{Binding VlcUpdateLabel}" Style="{DynamicResource GhostButton}" Padding="10,5" Margin="0,0,6,0"
+                            Command="{Binding UpdateVlcCommand}" ToolTip="{Binding VlcUpdateToolTip}" ToolTipService.ShowOnDisabled="True"
+                            Visibility="{Binding HasVlcUpdate, Converter={StaticResource BoolToVis}}"/>
                     <Button Content="Sincronizar" Style="{DynamicResource GhostButton}" Padding="10,5" Margin="0,0,6,0"
                             Command="{Binding SyncCommand}"
                             ToolTip="Lista todas as pastas de novo e lê as tags do que mudou (abrir a aba já sincroniza o que os mtimes apontam; isto é a varredura completa)"/>
@@ -312,11 +316,11 @@
                         </DockPanel>
                     </Border>
                     <CheckBox IsChecked="{Binding AutoAddRoots, Mode=TwoWay}" Margin="0,0,0,4"
-                              Content="Um download numa pasta fora do catálogo coloca essa pasta no catálogo"
-                              ToolTip="Desligado, o download fora das pastas cadastradas fica de fora (vai pro log)"/>
+                              Content="Auto-adicionar pastas"
+                              ToolTip="Um download numa pasta fora da biblioteca põe essa pasta na biblioteca. Desligado, ele fica de fora (vai pro log)"/>
                     <CheckBox IsChecked="{Binding AutoSync, Mode=TwoWay}" Margin="0,0,0,8"
-                              Content="Abrir a aba confere as pastas e sincroniza o que mudou"
-                              ToolTip="Desligado, só o botão Sincronizar varre — o que baixar continua entrando na hora"/>
+                              Content="Autosync"
+                              ToolTip="Abrir a aba confere as pastas e sincroniza o que mudou. Desligado, só o botão Sincronizar varre — o que baixar continua entrando na hora"/>
                     <DockPanel Margin="0,0,0,0">
                         <TextBlock DockPanel.Dock="Left" Text="Outras extensões:" Style="{DynamicResource Label}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                         <TextBlock DockPanel.Dock="Right" Text="além de áudio (mp3, m4a, flac, wav, ogg, opus…) e vídeo (mp4, mkv, webm, mov…)"

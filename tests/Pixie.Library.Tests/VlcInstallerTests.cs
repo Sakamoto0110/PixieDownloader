@@ -43,6 +43,21 @@ public sealed class VlcInstallerTests : IDisposable
     }
 
     [Theory]
+    [InlineData("3.0.23", "3.0.21", true)]
+    [InlineData("3.0.23", "3,0,21,0", true)]     // the shape of VLC's ProductVersion
+    [InlineData("3.0.23", "3.0.23", false)]
+    [InlineData("3.0.23", "3,0,23,0", false)]    // same version, other spelling
+    [InlineData("3.0.23", "3.0.23.1", false)]
+    [InlineData("3.1", "3.0.23", true)]
+    [InlineData("4.0.0", "3.0.23", true)]
+    [InlineData("3.0.9", "3.0.10", false)]       // numbers, not text
+    [InlineData("3.0.23", null, false)]          // unreadable installed version: no button for a guess
+    [InlineData("3.0.23", "", false)]
+    [InlineData("3.0.23", "dev", false)]
+    public void An_update_is_a_bigger_version_number(string latest, string? installed, bool newer)
+        => Assert.Equal(newer, VlcInstaller.IsNewer(latest, installed));
+
+    [Theory]
     [InlineData("vlc.exe", "pt-BR", true)]
     [InlineData("libvlc.dll", "pt-BR", true)]
     [InlineData("plugins/codec/libavcodec_plugin.dll", "pt-BR", true)]
@@ -153,6 +168,22 @@ public sealed class VlcInstallerTests : IDisposable
         Assert.Contains("forma do VLC", ex.Message);
         Assert.False(installer.IsInstalled);
     }
+
+    [Fact]
+    public async Task The_latest_version_is_one_request_and_nothing_downloaded()
+    {
+        Serve("9.9.9", BuildArchive("vlc-9.9.9"));
+        var handler = new FileHandler(ServerDir);
+        var installer = new VlcInstaller(new HttpClient(handler), ToolsDir, (level, message) => _log.Add(message));
+
+        Assert.Equal("9.9.9", await installer.LatestVersionAsync(CancellationToken.None));
+        Assert.Equal(["status-win-x64"], handler.Requested);
+        Assert.False(Directory.Exists(ToolsDir));
+    }
+
+    [Fact]
+    public void Nothing_runs_out_of_a_folder_that_is_not_there()
+        => Assert.False(NewInstaller().IsRunning());
 
     [Fact]
     public async Task A_status_that_is_not_a_version_stops_before_anything_is_downloaded()

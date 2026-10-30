@@ -130,6 +130,7 @@ public sealed class LibraryTabViewModel : ObservableObject
         UseDefaultPlayerCommand = new RelayCommand(() => SetPlayer(null), () => HasPlayer);
         UseVlcCommand = new RelayCommand(() => SetPlayer(AvailableVlc), () => AvailableVlc is { } vlc && !IsVlcBusy && !IsPlayer(vlc));
         DownloadVlcCommand = new RelayCommand(AskOrDownloadVlc, () => _vlc is not null && !IsVlcBusy && !ShowVlcPrompt);
+        UpdateVlcCommand = new RelayCommand(() => DownloadVlc(pick: false), () => HasVlcUpdate && !IsVlcBusy);
         VlcPromptUseCommand = new RelayCommand(() => { ShowVlcPrompt = false; SetPlayer(AvailableVlc); });
         VlcPromptDownloadCommand = new RelayCommand(() => { ShowVlcPrompt = false; DownloadVlc(); });
         VlcPromptCancelCommand = new RelayCommand(() => ShowVlcPrompt = false);
@@ -375,7 +376,24 @@ public sealed class LibraryTabViewModel : ObservableObject
 
     private string _vlcStatusText = "";
     /// <summary>Where the download is, shown next to the buttons while it runs.</summary>
-    public string VlcStatusText { get => _vlcStatusText; private set => SetProperty(ref _vlcStatusText, value); }
+    public string VlcStatusText { get => _vlcStatusText; private set { if (SetProperty(ref _vlcStatusText, value)) OnPropertyChanged(nameof(VlcUpdateLabel)); } }
+
+    // The portable VLC's update: asked once per session, when the tab first opens and tools\vlc is there.
+    // A newer version shows a button in the header; the download is the cone's, and the player stays as it is.
+
+    private bool _vlcUpdateChecked;
+    private string? _vlcUpdate;
+
+    /// <summary>The version VideoLAN has that the portable VLC is behind, or <see langword="null"/>.</summary>
+    public string? VlcUpdate
+    {
+        get => _vlcUpdate;
+        private set { if (SetProperty(ref _vlcUpdate, value)) NotifyVlc(); }
+    }
+
+    public bool HasVlcUpdate => _vlcUpdate is not null;
+    public string VlcUpdateLabel => IsVlcBusy && VlcStatusText.Length > 0 ? VlcStatusText : "Atualizar VLC";
+    public string VlcUpdateToolTip => $"VLC portátil {_vlc?.InstalledVersion} → {_vlcUpdate}";
 
     private bool _showVlcPrompt;
     public bool ShowVlcPrompt { get => _showVlcPrompt; private set { if (SetProperty(ref _showVlcPrompt, value)) NotifyVlc(); } }
@@ -395,7 +413,33 @@ public sealed class LibraryTabViewModel : ObservableObject
         OnPropertyChanged(nameof(AvailableVlc));
         OnPropertyChanged(nameof(UseVlcToolTip));
         OnPropertyChanged(nameof(DownloadVlcToolTip));
+        OnPropertyChanged(nameof(HasVlcUpdate));
+        OnPropertyChanged(nameof(VlcUpdateLabel));
+        OnPropertyChanged(nameof(VlcUpdateToolTip));
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>The session's one question to VideoLAN, only with the portable VLC in tools\vlc. Offline is silent.</summary>
+    private async void CheckVlcUpdate()
+    {
+        if (_vlcUpdateChecked || _vlc is null || !_vlc.IsInstalled)
+            return;
+        _vlcUpdateChecked = true;
+        try
+        {
+            var latest = await _vlc.LatestVersionAsync(_host.ShutdownToken);
+            var installed = _vlc.InstalledVersion;
+            if (latest is not null && VlcInstaller.IsNewer(latest, installed))
+            {
+                _host.Log(LogLevel.Info, $"VLC portátil {installed} → {latest} disponível");
+                VlcUpdate = latest;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ex is not OperationCanceledException)
+                _host.Log(LogLevel.Debug, $"atualização do VLC: {ex.Message}");
+        }
     }
 
     /// <summary>The session's one look for a VLC installed in Windows. Silent; nothing is written anywhere.</summary>
@@ -432,6 +476,7 @@ public sealed class LibraryTabViewModel : ObservableObject
     public ICommand UseDefaultPlayerCommand { get; }
     public ICommand UseVlcCommand { get; }
     public ICommand DownloadVlcCommand { get; }
+    public ICommand UpdateVlcCommand { get; }
     public ICommand VlcPromptUseCommand { get; }
     public ICommand VlcPromptDownloadCommand { get; }
     public ICommand VlcPromptCancelCommand { get; }
@@ -447,6 +492,7 @@ public sealed class LibraryTabViewModel : ObservableObject
             _ = _sync.EnsureLoadedAsync();
         }
         CheckInstalledVlc();
+        CheckVlcUpdate();
         // The check is one stat per known folder — cheap, but not for free on a sleeping disk, so not on every tab flick.
         if (!_manifest.AutoSync || DateTime.UtcNow - _lastAutoCheck < TimeSpan.FromSeconds(5))
             return;
@@ -1010,7 +1056,8 @@ public sealed class LibraryTabViewModel : ObservableObject
 
     // ───── Opening things ─────
 
-    private void Open(LibraryRow row)
+    /// <summary>A container opens or closes; a file goes to the player. VLC looks for one already running (and may wait for one to close): on the pool.</summary>
+    private async void Open(LibraryRow row)
     {
         if (row.IsContainer)
         {
@@ -1021,8 +1068,14 @@ public sealed class LibraryTabViewModel : ObservableObject
             return;
         try
         {
-            if (_manifest.Player is { } player)
-                Process.Start(new ProcessStartInfo(player) { ArgumentList = { row.Path }, UseShellExecute = false });
+            if (_manifest.Player is { } player && PlayerLaunch.IsVlc(player))
+            {
+                var path = row.Path;
+                var what = await Task.Run(() => PlayerLaunch.OpenInVlc(player, path));
+                _host.Log(LogLevel.Debug, $"abrir {path}: {what}");
+            }
+            else if (_manifest.Player is { } other)
+                Process.Start(PlayerLaunch.For(other, row.Path));
             else
                 Process.Start(new ProcessStartInfo(row.Path) { UseShellExecute = true });
         }
@@ -1113,11 +1166,19 @@ public sealed class LibraryTabViewModel : ObservableObject
         }
     }
 
-    /// <summary>The download runs on the pool; the status text next to the buttons shows where it is and the tab keeps working. Done → it is the player.</summary>
-    private async void DownloadVlc()
+    /// <summary>
+    /// The download runs on the pool; the status text next to the buttons shows where it is and the tab keeps
+    /// working. Done → it is the player, unless <paramref name="pick"/> is off (the update: the player stays).
+    /// </summary>
+    private async void DownloadVlc(bool pick = true)
     {
         if (_vlc is null || IsVlcBusy)
             return;
+        if (_vlc.IsInstalled && _vlc.IsRunning())
+        {
+            WarningText = "Feche o VLC portátil antes: a pasta dele está em uso.";   // before the 80 MB, not after
+            return;
+        }
         VlcStatusText = "";
         IsVlcBusy = true;
         try
@@ -1125,6 +1186,7 @@ public sealed class LibraryTabViewModel : ObservableObject
             var progress = new Progress<VlcProgress>(p => VlcStatusText = "VLC: " + p);
             var version = await _vlc.InstallAsync(progress, _host.ShutdownToken);
             _host.Log(LogLevel.Info, $"VLC {version} instalado em {_vlc.Directory}");
+            VlcUpdate = null;
         }
         catch (OperationCanceledException)
         {
@@ -1141,7 +1203,8 @@ public sealed class LibraryTabViewModel : ObservableObject
             IsVlcBusy = false;
             VlcStatusText = "";
         }
-        SetPlayer(_vlc.ExePath);
+        if (pick)
+            SetPlayer(_vlc.ExePath);
     }
 
     /// <summary>Runs on the UI thread. A bug here must not take the app down: an unhandled exception in a dispatcher callback is fatal.</summary>
