@@ -8,105 +8,183 @@
              d:DataContext="{d:DesignInstance vm:MainViewModel}"
              d:DesignWidth="700">
     <StackPanel>
-        <!-- ── Pasta e organização de saída ── -->
+        <!-- ── Saída: pasta, subpasta + nome (ou modelo à mão), prévia ── -->
         <Border Style="{StaticResource Card}" Padding="14" Margin="0,0,0,10">
             <StackPanel>
-                <TextBlock Text="Pasta e organização de saída" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Text="Saída" Style="{StaticResource SectionTitle}"/>
 
-                <!-- Onde salvar -->
-                <TextBlock Text="Salvar em" Style="{StaticResource Label}" Margin="0,2,0,0"/>
+                <!-- Pasta: digitar/colar + Enter, ou Procurar -->
+                <TextBlock Text="Pasta" Style="{StaticResource Label}" Margin="0,2,0,0"/>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0" IsReadOnly="True" VerticalContentAlignment="Center"
-                             Text="{Binding Settings.Paths.LastOutputDirectory}" ToolTip="Pasta de saída"/>
+                    <TextBox Grid.Column="0" VerticalContentAlignment="Center"
+                             Text="{Binding OutputDirectoryText, UpdateSourceTrigger=LostFocus}"
+                             KeyDown="OnOutputDirectoryKeyDown"
+                             ToolTip="Cole um caminho e tecle Enter. Se a pasta não existir, o primeiro download cria."/>
                     <Button Grid.Column="1" Content="Procurar" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
                             Command="{Binding BrowseOutputDirectoryCommand}"/>
                     <Button Grid.Column="2" Content="Abrir" Style="{StaticResource GhostButton}" Margin="6,0,0,0"
                             Command="{Binding OpenOutputFolderCommand}"/>
                 </Grid>
 
-                <!-- Como organizar -->
-                <TextBlock Text="Organizar arquivos" Style="{StaticResource Label}" Margin="0,14,0,0"/>
-                <ComboBox ItemsSource="{Binding TemplatePresets}"
-                          SelectedItem="{Binding SelectedOrganization, Mode=TwoWay}">
-                    <ComboBox.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding Label}"/>
-                        </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                </ComboBox>
-                <TextBlock Text="Modelo personalizado — definido em “Modelo avançado” abaixo." Style="{StaticResource Hint}" Margin="0,4,0,0"
-                           Visibility="{Binding IsCustomTemplate, Converter={StaticResource BoolToVis}}"/>
+                <!-- Subpasta + Nome, ou o modelo à mão. "Personalizar" troca um pelo outro e fica no mesmo lugar nos dois. -->
+                <Grid Margin="0,14,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                <!-- Prévia do caminho final -->
-                <Border Background="{StaticResource Brush.Accent.Subtle}" CornerRadius="6" Padding="10,8" Margin="0,12,0,0">
-                    <StackPanel>
-                        <TextBlock Text="O arquivo será salvo como:" Style="{StaticResource Hint}"/>
-                        <TextBlock Text="{Binding TemplatePreview}" FontFamily="{StaticResource Font.Mono}" FontSize="12"
-                                   TextWrapping="Wrap" Margin="0,3,0,0"/>
+                    <TextBlock Grid.Column="0" Text="Subpasta" Style="{StaticResource Label}" VerticalAlignment="Bottom"
+                               Visibility="{Binding Settings.Paths.UseCustomTemplate, Converter={StaticResource InverseBoolToVis}}"/>
+                    <TextBlock Grid.Column="2" Text="Nome" Style="{StaticResource Label}" VerticalAlignment="Bottom"
+                               Visibility="{Binding Settings.Paths.UseCustomTemplate, Converter={StaticResource InverseBoolToVis}}"/>
+                    <TextBlock Grid.Column="0" Text="Modelo" Style="{StaticResource Label}" VerticalAlignment="Bottom"
+                               Visibility="{Binding Settings.Paths.UseCustomTemplate, Converter={StaticResource BoolToVis}}"/>
+                    <StackPanel Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,6">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,14,0"
+                                    Visibility="{Binding Settings.Paths.UseCustomTemplate, Converter={StaticResource BoolToVis}}">
+                            <Button Content="Desfazer" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12" Focusable="False"
+                                    Command="{Binding UndoTemplateCommand}" ToolTip="Desfazer (Ctrl+Z)"/>
+                            <Button Content="Refazer" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12" Focusable="False" Margin="6,0,0,0"
+                                    Command="{Binding RedoTemplateCommand}" ToolTip="Refazer (Ctrl+Y)"/>
+                            <Button Content="Resetar" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12" Focusable="False" Margin="6,0,0,0"
+                                    Command="{Binding ResetTemplateCommand}" ToolTip="Volta ao que Subpasta e Nome montam. Dá pra desfazer."/>
+                        </StackPanel>
+                        <CheckBox Content="Personalizar" VerticalAlignment="Center"
+                                  IsChecked="{Binding Settings.Paths.UseCustomTemplate, Mode=TwoWay}"
+                                  ToolTip="Escrever o modelo do yt-dlp à mão. Desmarcar volta pros seletores; o texto fica guardado."/>
                     </StackPanel>
-                </Border>
 
-                <!-- Modelo avançado: pilha incremental de tokens -->
-                <Expander Header="Modelo avançado (montar por tokens)" Margin="0,12,0,0">
-                    <StackPanel Margin="0,8,0,0">
-                        <!-- Paleta: clique para empilhar -->
-                        <TextBlock Text="Clique para adicionar à pilha" Style="{StaticResource Label}"/>
-                        <ItemsControl ItemsSource="{Binding TokenPalette}">
+                    <ComboBox Grid.Row="1" Grid.Column="0" ItemsSource="{Binding FolderOptions}"
+                              SelectedItem="{Binding SelectedFolder, Mode=TwoWay}"
+                              Visibility="{Binding Settings.Paths.UseCustomTemplate, Converter={StaticResource InverseBoolToVis}}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Label}" ToolTip="{Binding ToolTip}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <ComboBox Grid.Row="1" Grid.Column="2" ItemsSource="{Binding NameOptions}"
+                              SelectedItem="{Binding SelectedName, Mode=TwoWay}"
+                              Visibility="{Binding Settings.Paths.UseCustomTemplate, Converter={StaticResource InverseBoolToVis}}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Label}" ToolTip="{Binding ToolTip}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
+                                Visibility="{Binding Settings.Paths.UseCustomTemplate, Converter={StaticResource BoolToVis}}">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text=".ext" Style="{StaticResource Hint}" FontFamily="{StaticResource Font.Mono}"
+                                       VerticalAlignment="Center" Margin="8,0,2,0"
+                                       ToolTip="A extensão (.mp3, .mp4, .gif) entra sozinha no fim"/>
+                            <!-- O desfazer da própria caixa fica desligado: o histórico é o do VM, que também vê os botões -->
+                            <TextBox x:Name="CustomTemplateBox" VerticalContentAlignment="Center" FontFamily="{StaticResource Font.Mono}"
+                                     IsUndoEnabled="False"
+                                     Text="{Binding Settings.Paths.CustomTemplate, UpdateSourceTrigger=PropertyChanged}">
+                                <TextBox.InputBindings>
+                                    <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoTemplateCommand}"/>
+                                    <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoTemplateCommand}"/>
+                                    <KeyBinding Key="Z" Modifiers="Control+Shift" Command="{Binding RedoTemplateCommand}"/>
+                                </TextBox.InputBindings>
+                            </TextBox>
+                        </DockPanel>
+                        <!-- Não focáveis: o clique não tira o cursor da caixa, então o campo entra onde ele está -->
+                        <DockPanel Margin="0,6,0,0">
+                            <Button DockPanel.Dock="Right" Content="{Binding MoreTokensButtonText}" Style="{StaticResource GhostButton}"
+                                    Padding="9,4" Margin="6,0,0,6" FontSize="12" Focusable="False" VerticalAlignment="Top"
+                                    Command="{Binding ToggleMoreTokensCommand}"
+                                    ToolTip="Mais campos do yt-dlp (artista, ano, duração, resolução…)"/>
+                            <ItemsControl ItemsSource="{Binding TokenPalette}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Content="{Binding Label}" ToolTip="{Binding ToolTip}" Style="{StaticResource GhostButton}"
+                                                Padding="9,4" Margin="0,0,6,6" FontSize="12" Focusable="False"
+                                                Click="OnInsertToken"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </DockPanel>
+                        <ItemsControl ItemsSource="{Binding MoreTokenPalette}"
+                                      Visibility="{Binding ShowMoreTokens, Converter={StaticResource BoolToVis}}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Button Content="{Binding Label}" Style="{StaticResource GhostButton}" Padding="9,4" Margin="0,0,6,6"
-                                            FontSize="12"
-                                            Command="{Binding DataContext.AddTokenCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                            CommandParameter="{Binding}"/>
+                                    <Button Content="{Binding Label}" ToolTip="{Binding ToolTip}" Style="{StaticResource GhostButton}"
+                                            Padding="9,4" Margin="0,0,6,6" FontSize="12" Focusable="False"
+                                            Click="OnInsertToken"/>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-
-                        <!-- Pilha atual -->
-                        <DockPanel Margin="0,8,0,0">
-                            <TextBlock Text="Pilha" Style="{StaticResource Label}" VerticalAlignment="Center"/>
-                            <Button DockPanel.Dock="Right" Content="Limpar" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12"
-                                    Margin="6,0,0,0" Command="{Binding ClearTokensCommand}"/>
-                            <Button DockPanel.Dock="Right" Content="Remover último" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12"
-                                    Command="{Binding RemoveLastTokenCommand}"/>
-                            <TextBlock/>
-                        </DockPanel>
-
-                        <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="6"
-                                Padding="8" Margin="0,4,0,0" MinHeight="40">
-                            <Grid>
-                                <TextBlock Text="(pilha vazia — adicione tokens acima)" Style="{StaticResource Hint}"
-                                           VerticalAlignment="Center"
-                                           Visibility="{Binding TemplateTokens.Count, Converter={StaticResource ZeroToVis}}"/>
-                                <ItemsControl ItemsSource="{Binding TemplateTokens}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Background="{StaticResource Brush.Accent.Subtle}" CornerRadius="5" Padding="7,3" Margin="0,0,5,5">
-                                                <TextBlock Text="{Binding}" FontFamily="{StaticResource Font.Mono}" FontSize="12"/>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </Grid>
-                        </Border>
-
-                        <!-- Texto cru (editável) -->
-                        <TextBlock Text="Template (texto)" Style="{StaticResource Label}" Margin="0,10,0,0"/>
-                        <TextBox Text="{Binding Settings.Paths.LastTemplate, UpdateSourceTrigger=PropertyChanged}"
-                                 VerticalContentAlignment="Center" FontFamily="{StaticResource Font.Mono}"/>
                     </StackPanel>
-                </Expander>
+                </Grid>
+
+                <!-- Prévia: o caminho que um download vai ter (cinza = a pasta escolhida, roxo = o que o layout cria) -->
+                <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="1" CornerRadius="6"
+                        Padding="8,6" Margin="0,12,0,0" ToolTip="{Binding PreviewPath}">
+                    <StackPanel>
+                        <ItemsControl ItemsSource="{Binding PreviewSegments}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:PathSegment}">
+                                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                                        <TextBlock x:Name="sep" Text="›" Foreground="{StaticResource Brush.Text.Tertiary}"
+                                                   Margin="4,0" VerticalAlignment="Center"/>
+                                        <Border x:Name="chip" CornerRadius="4" Padding="5,2" Background="Transparent">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock x:Name="text" Text="{Binding Text}" FontFamily="{StaticResource Font.Mono}" FontSize="12"
+                                                           Foreground="{StaticResource Brush.Text.Secondary}"/>
+                                                <TextBlock Text="{Binding Extension}" FontFamily="{StaticResource Font.Mono}" FontSize="12"
+                                                           Foreground="{StaticResource Brush.Text.Tertiary}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsFirst}" Value="True">
+                                            <Setter TargetName="sep" Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:PathSegmentKind.Folder}">
+                                            <Setter TargetName="chip" Property="Background" Value="{StaticResource Brush.Accent.Subtle}"/>
+                                            <Setter TargetName="text" Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="{x:Static vm:PathSegmentKind.File}">
+                                            <Setter TargetName="text" Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/>
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="{Binding PreviewNote}" TextWrapping="Wrap" Margin="5,4,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource Hint}">
+                                    <Style.Triggers>
+                                        <Trigger Property="Text" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Border>
 

@@ -48,9 +48,6 @@ public sealed class MainViewModel : ObservableObject
         _plugins.Changed += (_, _) => { RefreshPluginItems(); RefreshStoreStates(); };
 
         // ───────────────────────── Commands ─────────────────────────
-        AddTokenCommand = new RelayCommand<TokenOption>(AddToken);
-        RemoveLastTokenCommand = new RelayCommand(RemoveLastToken, () => HasTokens);
-        ClearTokensCommand = new RelayCommand(ClearTokens, () => HasTokens);
         TogglePlaylistCollapsedCommand = new RelayCommand(TogglePlaylistCollapsed);
         TogglePreviewCollapsedCommand = new RelayCommand(TogglePreviewCollapsed);
         OpenPreviewCommand = new RelayCommand(OpenPreview);
@@ -80,6 +77,10 @@ public sealed class MainViewModel : ObservableObject
         ClearCookiesCommand = new RelayCommand(ClearCookies);
         OpenLogsFolderCommand = new RelayCommand(OpenLogsFolder);
         OpenOutputFolderCommand = new RelayCommand(OpenOutputFolder);
+        UndoTemplateCommand = new RelayCommand(UndoTemplate, () => _templateHistory.CanUndo);
+        RedoTemplateCommand = new RelayCommand(RedoTemplate, () => _templateHistory.CanRedo);
+        ResetTemplateCommand = new RelayCommand(ResetTemplate, () => Settings.Paths.CustomTemplate != ResetTemplateTarget);
+        ToggleMoreTokensCommand = new RelayCommand(() => ShowMoreTokens = !ShowMoreTokens);
         EnablePluginCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) _plugins.Enable(p.Id); });
         DisablePluginCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) _plugins.Disable(p.Id); });
         UninstallPluginCommand = new RelayCommand<PluginItemViewModel>(p => { if (p is not null) _plugins.Uninstall(p.Id); });
@@ -126,19 +127,10 @@ public sealed class MainViewModel : ObservableObject
         YtDlp.PropertyChanged += OnToolStatusChanged;
         Ffmpeg.PropertyChanged += OnToolStatusChanged;
 
-        // Advanced template builder: seed the token stack and keep the stack buttons in sync.
-        TemplateTokens.CollectionChanged += (_, _) =>
-        {
-            RemoveLastTokenCommand.NotifyCanExecuteChanged();
-            ClearTokensCommand.NotifyCanExecuteChanged();
-        };
-        SyncTokensFromTemplate();
+        _customTemplateShown = Settings.Paths.CustomTemplate;   // the template history compares against this
     }
 
     // ───────────────────────── Commands (initialized in the constructor) ─────────────────────────
-    public RelayCommand<TokenOption> AddTokenCommand { get; }
-    public RelayCommand RemoveLastTokenCommand { get; }
-    public RelayCommand ClearTokensCommand { get; }
     public RelayCommand TogglePlaylistCollapsedCommand { get; }
     public RelayCommand TogglePreviewCollapsedCommand { get; }
     public RelayCommand OpenPreviewCommand { get; }
@@ -168,6 +160,10 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ClearCookiesCommand { get; }
     public RelayCommand OpenLogsFolderCommand { get; }
     public RelayCommand OpenOutputFolderCommand { get; }
+    public RelayCommand UndoTemplateCommand { get; }
+    public RelayCommand RedoTemplateCommand { get; }
+    public RelayCommand ResetTemplateCommand { get; }
+    public RelayCommand ToggleMoreTokensCommand { get; }
     public RelayCommand<PluginItemViewModel> EnablePluginCommand { get; }
     public RelayCommand<PluginItemViewModel> DisablePluginCommand { get; }
     public RelayCommand<PluginItemViewModel> UninstallPluginCommand { get; }
@@ -227,111 +223,184 @@ public sealed class MainViewModel : ObservableObject
     public string[] BitrateOptions { get; } = ["128k", "192k", "320k"];
     public LogLevel[] LogLevelOptions { get; } = [LogLevel.Debug, LogLevel.Info, LogLevel.Warning, LogLevel.Error];
 
-    /// <summary>Friendly output-organization choices; each maps to a yt-dlp output template.</summary>
-    public IReadOnlyList<TemplatePreset> TemplatePresets { get; } =
+    // ───────────────────────── Saída: pasta + layout ─────────────────────────
+    // "Subpasta" and "Nome" are two independent choices, or "Personalizar" takes a hand-written yt-dlp template;
+    // PathSettings composes them into Settings.Paths.Template (the extension is always appended there). What one
+    // download actually gets comes from OutputFor — the queue and the preview both ask it.
+
+    public IReadOnlyList<OutputChoice<OutputFolder>> FolderOptions { get; } =
     [
-        new("Sem subpastas (tudo junto)", "%(title)s.%(ext)s"),
-        new("Subpasta por playlist", "%(playlist_title)s/%(playlist_index)02d - %(title)s.%(ext)s"),
-        new("Subpasta por canal", "%(uploader)s/%(title)s.%(ext)s"),
-        new("Prefixo por data", "%(upload_date)s - %(title)s.%(ext)s"),
+        new("Nenhuma", OutputFolder.None, "Tudo direto na pasta"),
+        new("Playlist", OutputFolder.Playlist, "Uma pasta por playlist. Vídeo avulso vai direto na pasta."),
+        new("Canal", OutputFolder.Channel, "Uma pasta por canal"),
+        new("Canal › Playlist", OutputFolder.ChannelPlaylist, "A pasta do canal e, dentro dela, a da playlist"),
+    ];
+
+    public IReadOnlyList<OutputChoice<OutputName>> NameOptions { get; } =
+    [
+        new("Título", OutputName.Title, "Só o título do vídeo"),
+        new("Nº - Título", OutputName.IndexTitle, "A posição na playlist antes do título. Vídeo avulso fica só com o título."),
+        new("Data - Título", OutputName.DateTitle, "A data de envio (AAAAMMDD) antes do título"),
+        new("Canal - Título", OutputName.ChannelTitle, "O canal antes do título"),
+    ];
+
+    public OutputChoice<OutputFolder> SelectedFolder
+    {
+        get => FolderOptions.First(o => o.Value == Settings.Paths.Folder);
+        set { if (value is not null) Settings.Paths.Folder = value.Value; }
+    }
+
+    public OutputChoice<OutputName> SelectedName
+    {
+        get => NameOptions.First(o => o.Value == Settings.Paths.Name);
+        set { if (value is not null) Settings.Paths.Name = value.Value; }
+    }
+
+    /// <summary>The fields "Personalizar" inserts at the caret (AdvancedOptionsPanel code-behind). No extension: it's always appended.</summary>
+    public IReadOnlyList<TokenOption> TokenPalette { get; } =
+    [
+        new("Título", "%(title)s", "O título do vídeo"),
+        new("Canal", "%(uploader)s", "O canal"),
+        new("Playlist", "%(playlist_title)s", "O nome da playlist. Vídeo avulso fica sem."),
+        new("Nº", "%(playlist_index)02d", "A posição na playlist (01, 02…). Vídeo avulso fica sem."),
+        new("Data", "%(upload_date)s", "A data de envio (AAAAMMDD)"),
+        new("ID", "%(id)s", "O id do vídeo"),
+        new("-", " - ", "Separador \" - \""),
+        new("/", "/", "Começa uma subpasta"),
     ];
 
     /// <summary>
-    /// The organization preset that matches the current template, or <c>null</c> when the template
-    /// was hand-edited (in the advanced field) to something custom. Setting it rewrites the template.
+    /// What "Avançado" adds: other fields yt-dlp fills for a single video. Each job downloads one video by its
+    /// own URL, so playlist fields other than the two above (count, id, uploader) would come out "NA" — not offered.
     /// </summary>
-    public TemplatePreset? SelectedOrganization
-    {
-        get => TemplatePresets.FirstOrDefault(p => string.Equals(p.Template, Settings.Paths.LastTemplate, StringComparison.Ordinal));
-        set
-        {
-            if (value is not null && !string.Equals(value.Template, Settings.Paths.LastTemplate, StringComparison.Ordinal))
-                Settings.Paths.LastTemplate = value.Template;  // Paths change handler refreshes preview + this prop
-        }
-    }
-
-    /// <summary>True when the template doesn't match any organization preset (edited in Advanced).</summary>
-    public bool IsCustomTemplate => SelectedOrganization is null;
-
-    // ───────────────────────── Advanced template: incremental token stack ─────────────────────────
-
-    /// <summary>Palette of building blocks shown in the advanced editor (fields + separators).</summary>
-    public IReadOnlyList<TokenOption> TokenPalette { get; } =
+    public IReadOnlyList<TokenOption> MoreTokenPalette { get; } =
     [
-        new("Título", "%(title)s"),
-        new("Canal", "%(uploader)s"),
-        new("Playlist", "%(playlist_title)s"),
-        new("Nº playlist", "%(playlist_index)02d"),
-        new("Data", "%(upload_date)s"),
-        new("ID", "%(id)s"),
-        new("Extensão", "%(ext)s"),
-        new("/ (subpasta)", "/"),
-        new("- (hífen)", " - "),
-        new(". (ponto)", "."),
-        new("_ (underline)", "_"),
+        new("Artista", "%(artist,uploader)s", "O artista (vídeo de música); senão o canal"),
+        new("@canal", "%(uploader_id)s", "O @ do canal"),
+        new("Título curto", "%(title).60s", "O título cortado em 60 caracteres"),
+        new("AAAA-MM-DD", "%(upload_date>%Y-%m-%d)s", "A data de envio com hífens"),
+        new("Ano", "%(upload_date>%Y)s", "O ano de envio"),
+        new("Hoje", "%(epoch>%Y-%m-%d)s", "A data do download"),
+        new("Duração", "%(duration_string)s", "A duração do vídeo (1：02：03)"),
+        new("Resolução", "%(resolution)s", "1920x1080 no vídeo; no MP3 vira \"audio only\""),
+        new("Views", "%(view_count)s", "As visualizações na hora do download"),
+        new("Site", "%(extractor)s", "De onde veio (youtube, soundcloud…)"),
+        new("_", "_", "Separador \"_\""),
     ];
 
-    /// <summary>The template broken into an ordered stack of segments (fields + literals).</summary>
-    public ObservableCollection<string> TemplateTokens { get; } = [];
-
-    private bool _suppressTokenSync;
-    private bool HasTokens => TemplateTokens.Count > 0;
-
-    private void AddToken(TokenOption? token)
+    private bool _showMoreTokens;
+    /// <summary>The "Avançado" row of fields under Personalizar. Per session.</summary>
+    public bool ShowMoreTokens
     {
-        if (token is null) return;
-        TemplateTokens.Add(token.Value);
-        RebuildTemplateFromTokens();
-    }
-
-    private void RemoveLastToken()
-    {
-        if (TemplateTokens.Count == 0) return;
-        TemplateTokens.RemoveAt(TemplateTokens.Count - 1);
-        RebuildTemplateFromTokens();
-    }
-
-    private void ClearTokens()
-    {
-        TemplateTokens.Clear();
-        RebuildTemplateFromTokens();
-    }
-
-    /// <summary>Writes the concatenated stack back to the template (guarded against re-tokenizing).</summary>
-    private void RebuildTemplateFromTokens()
-    {
-        _suppressTokenSync = true;
-        Settings.Paths.LastTemplate = string.Concat(TemplateTokens);
-        _suppressTokenSync = false;
-    }
-
-    /// <summary>Re-derives the token stack from the template (combo pick, manual edit, or load).</summary>
-    private void SyncTokensFromTemplate()
-    {
-        if (_suppressTokenSync) return;
-        _suppressTokenSync = true;
-        TemplateTokens.Clear();
-        foreach (var seg in TokenizeTemplate(Settings.Paths.LastTemplate))
-            TemplateTokens.Add(seg);
-        _suppressTokenSync = false;
-    }
-
-    /// <summary>Splits a template into yt-dlp field tokens (e.g. <c>%(title)s</c>) and the literals between them.</summary>
-    private static IEnumerable<string> TokenizeTemplate(string template)
-    {
-        if (string.IsNullOrEmpty(template))
-            yield break;
-
-        int last = 0;
-        foreach (Match m in Regex.Matches(template, @"%\(\w+\)(?:0\d+)?[sd]"))
+        get => _showMoreTokens;
+        set
         {
-            if (m.Index > last)
-                yield return template[last..m.Index];   // literal chunk
-            yield return m.Value;                        // field token
-            last = m.Index + m.Length;
+            if (SetProperty(ref _showMoreTokens, value))
+                OnPropertyChanged(nameof(MoreTokensButtonText));
         }
-        if (last < template.Length)
-            yield return template[last..];
+    }
+
+    public string MoreTokensButtonText => ShowMoreTokens ? "Avançado ▴" : "Avançado ▾";
+
+    // ───── Saída: histórico do modelo personalizado ─────
+    // Desfazer / Refazer / Resetar (and Ctrl+Z / Ctrl+Y in the box) work on Settings.Paths.CustomTemplate. A field
+    // button or Resetar is one step; typing is one step per burst (keystrokes less than TypingBurst apart). The
+    // box's own undo is off: it couldn't see the buttons' edits. Session only — nothing of it is saved.
+
+    private readonly UndoHistory<string> _templateHistory = new();
+    private string _customTemplateShown;         // CustomTemplate before its latest change (PathSettings raises after setting)
+    private bool _applyingTemplateEdit;          // our own write: it recorded itself, or is an undo/redo
+    private DateTime _lastTypedAt = DateTime.MinValue;
+    private static readonly TimeSpan TypingBurst = TimeSpan.FromSeconds(1);
+
+    /// <summary>What Resetar goes back to: the template the Subpasta and Nome selectors make.</summary>
+    private string ResetTemplateTarget => OutputLayout.WithoutExtension(OutputLayout.Build(Settings.Paths.Folder, Settings.Paths.Name));
+
+    /// <summary>A field button's edit (the view computes the text with the caret): one step of its own.</summary>
+    public void EditCustomTemplate(string text) => ApplyCustomTemplate(text, record: true);
+
+    private void UndoTemplate()
+    {
+        if (_templateHistory.CanUndo)
+            ApplyCustomTemplate(_templateHistory.Undo(Settings.Paths.CustomTemplate), record: false);
+    }
+
+    private void RedoTemplate()
+    {
+        if (_templateHistory.CanRedo)
+            ApplyCustomTemplate(_templateHistory.Redo(Settings.Paths.CustomTemplate), record: false);
+    }
+
+    private void ResetTemplate() => ApplyCustomTemplate(ResetTemplateTarget, record: true);
+
+    private void ApplyCustomTemplate(string text, bool record)
+    {
+        var current = Settings.Paths.CustomTemplate;
+        if (text != current)
+        {
+            if (record)
+                _templateHistory.Record(current);
+            _applyingTemplateEdit = true;
+            try { Settings.Paths.CustomTemplate = text; }
+            finally { _applyingTemplateEdit = false; }
+        }
+        _lastTypedAt = DateTime.MinValue;   // the next keystroke starts a step of its own
+        RefreshTemplateHistoryCommands();
+    }
+
+    /// <summary>
+    /// Paths.CustomTemplate changed. Ours (above) already recorded itself; one made while Personalizar is off is
+    /// the prefill of turning it on, not an edit. Anything else is the box's binding — typing.
+    /// </summary>
+    private void OnCustomTemplateChanged()
+    {
+        var previous = _customTemplateShown;
+        _customTemplateShown = Settings.Paths.CustomTemplate;
+        if (!_applyingTemplateEdit && Settings.Paths.UseCustomTemplate)
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastTypedAt > TypingBurst)
+                _templateHistory.Record(previous);
+            _lastTypedAt = now;
+        }
+        RefreshTemplateHistoryCommands();
+    }
+
+    private void RefreshTemplateHistoryCommands()
+    {
+        UndoTemplateCommand.NotifyCanExecuteChanged();
+        RedoTemplateCommand.NotifyCanExecuteChanged();
+        ResetTemplateCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// The "Pasta" field: a typed or pasted path is committed on Enter or when the field loses focus.
+    /// Anything that isn't a full folder path is refused and the field shows the stored folder again.
+    /// The folder doesn't have to exist — the first download creates it.
+    /// </summary>
+    public string OutputDirectoryText
+    {
+        get => Settings.Paths.LastOutputDirectory ?? "";
+        set
+        {
+            var typed = Environment.ExpandEnvironmentVariables((value ?? "").Trim().Trim('"'));
+            if (TryNormalizeFolder(typed, out var full))
+                Settings.Paths.LastOutputDirectory = full;
+            else if (typed.Length > 0)
+                StatusText = $"Pasta inválida: {value}";
+            OnPropertyChanged();   // WPF re-reads after the set: the field shows what's stored, normalized or the old one
+        }
+    }
+
+    private static bool TryNormalizeFolder(string path, out string full)
+    {
+        full = "";
+        if (path.Length == 0 || !Path.IsPathFullyQualified(path))
+            return false;
+        try { full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+        var root = Path.GetPathRoot(full) ?? "";
+        return full[root.Length..].IndexOfAny([':', '*', '?', '"', '<', '>', '|']) < 0;
     }
 
     // ───────────────────────── URL analysis state ─────────────────────────
@@ -385,7 +454,7 @@ public sealed class MainViewModel : ObservableObject
             Settings.Video.DownloadVideo = value;   // persisted (debounced) by SettingsService
             OnPropertyChanged();
             OnPropertyChanged(nameof(DownloadButtonLabel));
-            UpdateTemplatePreview();                 // output extension flips between .mp3 and .mp4
+            UpdateOutputPreview();                 // output extension flips between .mp3 and .mp4
         }
     }
 
@@ -423,7 +492,7 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(ShowGifTrim));
             OnPropertyChanged(nameof(GifRangeText));
             AnalyzeGifPreviewCommand.NotifyCanExecuteChanged();
-            UpdateTemplatePreview();              // output extension flips to .gif
+            UpdateOutputPreview();              // output extension flips to .gif
         }
     }
 
@@ -793,6 +862,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(PreviewUrl));
                 OnSelectedPlaylistItemChanged(value);
+                UpdateOutputPreview();   // the output preview shows the selected row
             }
         }
     }
@@ -861,12 +931,32 @@ public sealed class MainViewModel : ObservableObject
             OpenUrl?.Invoke(PreviewUrl);
     }
 
-    // ───────────────────────── Output template ─────────────────────────
-    private string _templatePreview = "";
-    public string TemplatePreview
+    // ───────────────────────── Saída: prévia ─────────────────────────
+    // A trail of the path one download will get: the chosen folder (its last two parts), the subfolders the
+    // layout adds, the file name. Built from OutputFor, the function the queue uses, with the analysed video's
+    // own values — so a single video shows no playlist folder, because it gets none.
+
+    private IReadOnlyList<PathSegment> _previewSegments = [];
+    public IReadOnlyList<PathSegment> PreviewSegments
     {
-        get => _templatePreview;
-        set => SetProperty(ref _templatePreview, value);
+        get => _previewSegments;
+        private set => SetProperty(ref _previewSegments, value);
+    }
+
+    private string _previewNote = "";
+    /// <summary>One line under the trail: which row it is, what a single video leaves out, or that it's an example.</summary>
+    public string PreviewNote
+    {
+        get => _previewNote;
+        private set => SetProperty(ref _previewNote, value);
+    }
+
+    private string _previewPath = "";
+    /// <summary>The whole path, for the trail's tooltip.</summary>
+    public string PreviewPath
+    {
+        get => _previewPath;
+        private set => SetProperty(ref _previewPath, value);
     }
 
     // ───────────────────────── Advanced (max duration text proxy) ─────────────────────────
@@ -1156,7 +1246,7 @@ public sealed class MainViewModel : ObservableObject
     public async Task InitializeAsync()
     {
         _service.LogEmitted += OnLogEmitted;
-        UpdateTemplatePreview();
+        UpdateOutputPreview();
 
         // The pending file says which job folders belong to a processing that can resume; everything
         // else left in the staging folder is a leftover of a session that died mid-download (a clean
@@ -1322,7 +1412,7 @@ public sealed class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedCount));
         OnPropertyChanged(nameof(SelectedCountText));
         OnPropertyChanged(nameof(DownloadButtonLabel));
-        UpdateTemplatePreview();
+        UpdateOutputPreview();
         DownloadCommand.NotifyCanExecuteChanged();
     }
 
@@ -1461,31 +1551,15 @@ public sealed class MainViewModel : ObservableObject
         var audio = BuildAudioOptions();
         var advanced = BuildAdvancedOptions();
         var video = BuildListVideoOptions();
-        var outDir = Settings.Paths.LastOutputDirectory!;
-        var template = Settings.Paths.LastTemplate;
         int added = 0;
 
-        if (_isImportedList)
+        if (IsPlaylist)
         {
-            // Imported list: every row is its own URL. Files go to the list's subfolder (the .txt name)
-            // with a flat template, optionally numbered "N - " by position in the list.
-            var dir = string.IsNullOrEmpty(_importFolder) ? outDir : Path.Combine(outDir, _importFolder);
+            // A playlist or an imported list: each row downloads by its own URL (no playlist re-fetch per job).
             foreach (var item in PlaylistItems.Where(i => i.IsSelected))
             {
-                var tpl = _importNumbered ? OutputTemplate.PrefixFileName("%(title)s.%(ext)s", $"{item.Index} - ") : "%(title)s.%(ext)s";
+                var (dir, tpl) = OutputFor(item);
                 var req = new DownloadRequest(item.WebpageUrl, dir, tpl, audio, advanced) { Video = video, SourceDuration = item.Duration };
-                if (AddJob(req, item.Title)) added++;
-            }
-        }
-        else if (IsPlaylist)
-        {
-            // Playlist: each item downloads by its own URL (no playlist re-fetch per job); the playlist
-            // tokens of the template are baked in as literals so the file names come out the same.
-            var perPlaylist = OutputTemplate.SubstituteLiteral(template, "playlist_title", PlaylistTitle ?? "Playlist");
-            foreach (var item in PlaylistItems.Where(i => i.IsSelected))
-            {
-                var tpl = OutputTemplate.SubstituteLiteral(perPlaylist, "playlist_index", item.Index.ToString(CultureInfo.InvariantCulture));
-                var req = new DownloadRequest(item.WebpageUrl, outDir, tpl, audio, advanced) { Video = video, SourceDuration = item.Duration };
                 if (AddJob(req, item.Title)) added++;
             }
         }
@@ -1513,14 +1587,37 @@ public sealed class MainViewModel : ObservableObject
                 trimmedVideo = video with { StartTime = TimeSpan.FromSeconds(TrimStartSeconds), EndTime = TimeSpan.FromSeconds(TrimEndSeconds) };
                 length = TimeSpan.FromSeconds(TrimEndSeconds - TrimStartSeconds);
             }
-            // A single video is not part of a playlist here: strip the playlist tokens instead of letting
-            // yt-dlp print "NA" into the path.
-            var tpl = OutputTemplate.WithoutPlaylistTokens(template);
-            var req = new DownloadRequest(v.WebpageUrl, outDir, tpl, audio, advanced) { Video = trimmedVideo, SourceDuration = length };
+            var (dir, tpl) = OutputFor(item: null);
+            var req = new DownloadRequest(v.WebpageUrl, dir, tpl, audio, advanced) { Video = trimmedVideo, SourceDuration = length };
             if (AddJob(req, v.Title)) added++;
         }
 
         return added;
+    }
+
+    /// <summary>
+    /// The folder and the template one download gets — the queue above and the output preview both ask
+    /// here, so the preview shows what the download does. <paramref name="item"/> is a playlist or imported
+    /// row; null = the analysed single video.
+    /// </summary>
+    private (string Directory, string Template) OutputFor(PlaylistItemViewModel? item)
+    {
+        var outDir = Settings.Paths.LastOutputDirectory ?? "";
+        if (_isImportedList && item is not null)
+        {
+            // Imported list: every row is its own URL. Files go to the list's subfolder (the .txt name)
+            // with a flat template, optionally numbered "N - " by position in the list.
+            const string flat = "%(title)s.%(ext)s";
+            var dir = string.IsNullOrEmpty(_importFolder) ? outDir : Path.Combine(outDir, _importFolder);
+            return (dir, _importNumbered ? OutputTemplate.PrefixFileName(flat, $"{item.Index} - ") : flat);
+        }
+        if (IsPlaylist && item is not null)
+        {
+            // The playlist's title and the row's position are baked in: the job fetches the video by its own URL.
+            return (outDir, OutputTemplate.ForPlaylistItem(Settings.Paths.Template, PlaylistTitle ?? "Playlist", item.Index));
+        }
+        // A single video is not part of a playlist here: the playlist fields are dropped, not printed as "NA".
+        return (outDir, OutputTemplate.WithoutPlaylistTokens(Settings.Paths.Template));
     }
 
     // ═════════════════════════ Fila de downloads ═════════════════════════
@@ -2245,7 +2342,7 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(SelectedCount));
             OnPropertyChanged(nameof(SelectedCountText));
             OnPropertyChanged(nameof(DownloadButtonLabel));
-            UpdateTemplatePreview();
+            UpdateOutputPreview();
             DownloadCommand.NotifyCanExecuteChanged();
             StatusText = $"Lista '{listTitle}' pronta — {PlaylistItems.Count} itens";
         }
@@ -2397,7 +2494,7 @@ public sealed class MainViewModel : ObservableObject
         if (!string.IsNullOrEmpty(chosen))
         {
             Settings.Paths.LastOutputDirectory = chosen;
-            UpdateTemplatePreview();
+            UpdateOutputPreview();
             DownloadCommand.NotifyCanExecuteChanged();
         }
     }
@@ -2427,7 +2524,7 @@ public sealed class MainViewModel : ObservableObject
 
     // ═════════════════════════ Debug commands ═════════════════════════
     private Task Simulate() => RunDebugAsync(["--simulate", DebugUrl]);
-    private Task GetFilename() => RunDebugAsync(["--get-filename", "-o", Settings.Paths.LastTemplate, DebugUrl]);
+    private Task GetFilename() => RunDebugAsync(["--get-filename", "-o", Settings.Paths.Template, DebugUrl]);
     private Task GetTitle() => RunDebugAsync(["--get-title", DebugUrl]);
     private Task GetDuration() => RunDebugAsync(["--get-duration", DebugUrl]);
     private Task GetThumbnail() => RunDebugAsync(["--get-thumbnail", DebugUrl]);
@@ -2478,13 +2575,17 @@ public sealed class MainViewModel : ObservableObject
 
     private void OnPathsSettingsChanged(object? sender, PropertyChangedEventArgs e)
     {
-        UpdateTemplatePreview();
-        if (e.PropertyName is nameof(PathSettings.LastTemplate) or null)
+        switch (e.PropertyName)
         {
-            OnPropertyChanged(nameof(SelectedOrganization));
-            OnPropertyChanged(nameof(IsCustomTemplate));
-            SyncTokensFromTemplate();   // no-op while we're the ones rewriting the template
+            case nameof(PathSettings.Folder): OnPropertyChanged(nameof(SelectedFolder)); break;
+            case nameof(PathSettings.Name): OnPropertyChanged(nameof(SelectedName)); break;
+            case nameof(PathSettings.LastOutputDirectory): OnPropertyChanged(nameof(OutputDirectoryText)); break;
+            case nameof(PathSettings.CustomTemplate): OnCustomTemplateChanged(); break;
         }
+        if (e.PropertyName is nameof(PathSettings.Folder) or nameof(PathSettings.Name))
+            ResetTemplateCommand.NotifyCanExecuteChanged();   // Resetar's target moved
+        if (e.PropertyName is nameof(PathSettings.Template) or nameof(PathSettings.LastOutputDirectory) or null)
+            UpdateOutputPreview();
     }
 
     private void OnAdvancedSettingsChanged(object? sender, PropertyChangedEventArgs e)
@@ -2638,38 +2739,106 @@ public sealed class MainViewModel : ObservableObject
         try { await Task.WhenAll(tasks); } catch { }
     }
 
-    private void UpdateTemplatePreview()
+    private void UpdateOutputPreview()
     {
-        var sampleTitle = SingleVideo?.Title
-                          ?? PlaylistItems.FirstOrDefault()?.Title
-                          ?? "Exemplo de Música";
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var layout = Settings.Paths.Template;
+        string dir, template, note;
+        VideoInfo? video;
+
+        if (IsPlaylist && PlaylistItems.Count > 0)
         {
-            ["title"] = sampleTitle,
-            ["id"] = SingleVideo?.Id ?? PlaylistItems.FirstOrDefault()?.Id ?? "dQw4w9WgXcQ",
-            ["uploader"] = SingleVideo?.Uploader ?? PlaylistUploader ?? "Canal",
-            ["playlist_title"] = PlaylistTitle ?? "Playlist",
-            ["playlist_index"] = "1",
-            ["upload_date"] = "20260523",
+            var item = SelectedPlaylistItem ?? PlaylistItems.FirstOrDefault(i => i.IsSelected) ?? PlaylistItems[0];
+            (dir, template) = OutputFor(item);
+            video = item.Video;
+            note = _isImportedList
+                ? "Lista importada: a pasta e a numeração vêm da importação."
+                : $"Item {item.Index} de {PlaylistItems.Count}. Os outros seguem o mesmo formato.";
+        }
+        else if (SingleVideo is { } single)
+        {
+            (dir, template) = OutputFor(item: null);
+            video = single;
+            note = SingleVideoLeavesOut(layout) ?? "";
+        }
+        else
+        {
+            // Nothing analysed yet: a made-up playlist item, the layout's fullest shape.
+            dir = Settings.Paths.LastOutputDirectory ?? "";
+            template = OutputTemplate.ForPlaylistItem(layout, "Playlist", 1);
+            video = null;
+            note = "Exemplo de playlist." + (SingleVideoLeavesOut(layout) is { } left ? " " + left : "");
+        }
+
+        // A field the analysis didn't bring (a flat playlist row has no date) is filled in at download time;
+        // the preview names it instead of guessing.
+        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["title"] = video is null ? "Título do vídeo" : TitleCleanup.StripMediaExtension(video.Title),   // what the download does
+            ["id"] = video?.Id ?? "dQw4w9WgXcQ",
+            ["uploader"] = video is null ? "Canal" : video.Uploader,
+            ["upload_date"] = video is null ? "20260523" : video.Metadata.GetValueOrDefault("date"),
+            ["artist"] = video is null ? null : video.Metadata.GetValueOrDefault("artist"),
+            ["duration_string"] = video?.Duration is { } d ? DurationString(d) : video is null ? "4:12" : null,
+            ["epoch"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture),
             ["ext"] = ExtractGif ? "gif" : DownloadVideo ? "mp4" : "mp3",
         };
-        var rendered = RenderTemplate(Settings.Paths.LastTemplate, values);
-        var dir = Settings.Paths.LastOutputDirectory ?? "";
-        TemplatePreview = string.IsNullOrEmpty(dir) ? rendered : Path.Combine(dir, rendered);
+        var rendered = OutputTemplate.Render(template, values, field => $"‹{FieldLabel(field)}›");
+
+        PreviewSegments = BuildPreviewSegments(dir, rendered, "." + values["ext"]);
+        PreviewNote = note;
+        PreviewPath = Path.Combine([dir, .. rendered.Folders, rendered.FileName]);
     }
 
-    private static string RenderTemplate(string template, IReadOnlyDictionary<string, string> values)
-        => Regex.Replace(template, @"%\((?<k>\w+)\)(?<pad>0\d+)?(?<type>[sd])", m =>
-        {
-            if (!values.TryGetValue(m.Groups["k"].Value, out var val))
-                return m.Value;
-            if (m.Groups["type"].Value == "d" && m.Groups["pad"].Success && int.TryParse(val, out var n))
-            {
-                var width = int.Parse(m.Groups["pad"].Value);
-                return n.ToString("D" + width);
-            }
-            return val;
-        });
+    /// <summary>What a single video loses from this layout, as the preview says it; null when nothing.</summary>
+    private static string? SingleVideoLeavesOut(string template)
+    {
+        var left = new List<string>(2);
+        if (OutputTemplate.UsesField(template, "playlist_title")) left.Add("a playlist");
+        if (OutputTemplate.UsesField(template, "playlist_index")) left.Add("o Nº");
+        return left.Count == 0 ? null : $"Vídeo avulso fica sem {string.Join(" e ", left)}.";
+    }
+
+    private static string FieldLabel(string field) => field switch
+    {
+        "title" => "título",
+        "uploader" => "canal",
+        "uploader_id" => "@canal",
+        "upload_date" => "data",
+        "playlist_title" => "playlist",
+        "playlist_index" => "nº",
+        "artist" => "artista",
+        "duration_string" => "duração",
+        "resolution" => "resolução",
+        "view_count" => "views",
+        "extractor" => "site",
+        _ => field,
+    };
+
+    /// <summary>yt-dlp's <c>duration_string</c>: "4:12", "1:02:03".</summary>
+    private static string DurationString(TimeSpan d)
+        => d.TotalHours >= 1
+            ? $"{(int)d.TotalHours}:{d.Minutes:00}:{d.Seconds:00}"
+            : $"{d.Minutes}:{d.Seconds:00}";
+
+    /// <summary>The chosen folder's last two parts (an ellipsis before them when there's more), the layout's subfolders, the file.</summary>
+    private static IReadOnlyList<PathSegment> BuildPreviewSegments(string dir, RenderedPath rendered, string extension)
+    {
+        var segments = new List<PathSegment>();
+        var baseParts = dir.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        if (baseParts.Length > 2)
+            segments.Add(new PathSegment("…", PathSegmentKind.Base));
+        foreach (var part in baseParts.TakeLast(2))
+            segments.Add(new PathSegment(part, PathSegmentKind.Base));
+        foreach (var folder in rendered.Folders)
+            segments.Add(new PathSegment(folder, PathSegmentKind.Folder));
+
+        var file = rendered.FileName;
+        var stem = file.EndsWith(extension, StringComparison.OrdinalIgnoreCase) ? file[..^extension.Length] : file;
+        segments.Add(new PathSegment(stem, PathSegmentKind.File, file[stem.Length..]));
+
+        segments[0] = segments[0] with { IsFirst = true };
+        return segments;
+    }
 
     private bool FilterLogEntry(object obj) => obj is LogEntry e && e.Level >= MinLogLevel;
 
@@ -2749,10 +2918,19 @@ public sealed class MainViewModel : ObservableObject
     }
 }
 
-public sealed record TemplatePreset(string Label, string Template);
+/// <summary>One entry of the "Subpasta" / "Nome" selectors.</summary>
+public sealed record OutputChoice<T>(string Label, T Value, string ToolTip);
 
-/// <summary>A building block for the advanced template editor: a friendly label + the segment it appends.</summary>
-public sealed record TokenOption(string Label, string Value);
+/// <summary>A field "Personalizar" inserts at the caret: a short label, the yt-dlp text and what it is.</summary>
+public sealed record TokenOption(string Label, string Value, string ToolTip);
+
+public enum PathSegmentKind { Base, Folder, File }
+
+/// <summary>
+/// One piece of the output preview's trail: part of the chosen folder, a subfolder the layout adds, or the
+/// file (whose <see cref="Extension"/> is drawn muted). <see cref="IsFirst"/> = no separator before it.
+/// </summary>
+public sealed record PathSegment(string Text, PathSegmentKind Kind, string Extension = "", bool IsFirst = false);
 
 /// <summary>Result of the "Colar links" dialog: the URLs (one per line, deduped) and whether to number the files.</summary>
 public sealed record PastedLinks(IReadOnlyList<string> Urls, bool Numbered);

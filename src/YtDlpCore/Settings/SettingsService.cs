@@ -40,6 +40,7 @@ public sealed class SettingsService : IDisposable
         Current = await TryLoadAsync(_path, ct).ConfigureAwait(false)
                   ?? await TryLoadAsync(_backupPath, ct).ConfigureAwait(false)
                   ?? new AppSettings();
+        Current.Upgrade();   // before change tracking: a migrated file is written on the next real change, not now
         WireChangeTracking();
     }
 
