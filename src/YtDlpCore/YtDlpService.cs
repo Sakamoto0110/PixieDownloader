@@ -647,6 +647,10 @@ public sealed class YtDlpService : IYtDlpService, IDisposable
         if (r.Audio.EmbedThumbnail)
             args.Add("--embed-thumbnail");
 
+        // "Aula 3.mp4" would come out "Aula 3.mp4.mp3": cut the extension the uploader left in the title before
+        // the file is named and the tag written. The output preview applies the same pattern (TitleCleanup).
+        args.AddRange(TitleCleanup.YtDlpArgs);
+
         if (r.Audio.EmbedMetadata)
         {
             args.Add("--embed-metadata");

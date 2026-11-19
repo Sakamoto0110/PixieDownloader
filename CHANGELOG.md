@@ -13,6 +13,21 @@ Os plugins oficiais têm versão e release próprias, separadas das do app: a ta
 - **Library 1.0.0** — 2026-09-15 — módulo 2 do roadmap: a aba **Biblioteca** cataloga o que já está em disco. Pastas nomeadas apontam pra pastas reais (Adicionar pasta, renomear, remover — nenhum arquivo é tocado) e tudo abaixo delas entra num índice com título, artista, álbum, duração, bitrate e o número de capítulos ID3 — um mix com a tracklist gravada mostra "24 faixas". Busca sem acento por título/artista/álbum/arquivo/pasta, filtro por tipo (áudio, vídeo, outros), ordem (recentes, título, artista, duração, tamanho, pasta), rodapé com contagem, duração e tamanho do que está na tela. Duplo clique ou **Abrir** abre no programa que você escolher em Opções (VLC é a recomendação) ou no padrão do Windows; **Pasta** mostra o arquivo no Explorer. Só áudio e vídeo entram por padrão; "Outras extensões" em Opções acrescenta o que quiser (gif, por exemplo) e a extensão aparece em cada linha. **O que o app baixa entra sozinho**: ao terminar um download, a pasta de saída vira uma pasta do catálogo se nenhuma a contém (dá pra desligar em Opções) e o arquivo aparece na hora. Abrir a aba confere as pastas e sincroniza só o que mudou — as tags são lidas uma vez e relidas só quando o arquivo muda; **Sincronizar** faz a varredura completa. Disco desligado não apaga nada: a pasta fica marcada como não encontrada e o que já estava no catálogo continua listado. Tudo em `data\library\` (`manifest.json` legível, `index.json`).
 - **TrackTracer 1.0.0** — 2026-09-15 — a primeira release própria; o mesmo plugin que saiu junto com o app 1.7.0.
 
+## [1.8.0] — 2026-11-19
+
+### Adicionado
+- **Saída refeita.** A caixa "Organizar arquivos" vira duas escolhas independentes: **Subpasta** (Nenhuma / Playlist / Canal / Canal › Playlist) e **Nome** (Título / Nº - Título / Data - Título / Canal - Título) — "pasta do canal com a data no nome" agora é só escolher os dois. **Personalizar** troca os seletores por um modelo do yt-dlp escrito à mão: os botões de campo entram onde está o cursor, **Avançado ▾** mostra mais campos (artista, @canal, título curto, AAAA-MM-DD, ano, data do download, duração, resolução, views, site), **Desfazer / Refazer / Resetar** (e Ctrl+Z / Ctrl+Y) desfazem a bagunça, e a extensão entra sozinha no fim. Desmarcar volta aos seletores e guarda o texto.
+- **A prévia do caminho é a de verdade**: ela é calculada pela mesma função que a fila usa. Um vídeo avulso aparece sem a pasta de playlist e sem o número (é o que acontece no download), uma playlist mostra o item selecionado com o número real, e um `/` no título aparece como `⧸`, como o yt-dlp grava. Uma trilha separa a pasta escolhida (cinza) das subpastas que o layout cria (roxo); o caminho inteiro fica no tooltip.
+- **Capa** no painel de metadados: a primeira linha é a miniatura que vai como capa do arquivo (a mesma opção de "Embutir capa", ligada por padrão), com a imagem no expander. "Incluir metadados" passa a contar a capa junto com os campos.
+
+### Alterado
+- O campo **Pasta** aceita digitar ou colar um caminho: Enter confirma, Esc desfaz, `%USERPROFILE%` funciona, e a pasta não precisa existir — o primeiro download cria.
+- O `settings.json` passa pra versão 2. O modelo antigo vira os seletores (se for um dos quatro de antes) ou o modelo personalizado. O `lastTemplate` continua sendo gravado, então voltar pra 1.7 mantém o layout.
+
+### Corrigido
+- Vídeo enviado direto de um arquivo, com ".mp4" no fim do título, saía `Aula.mp4.mp3`: a extensão de mídia é cortada do fim do título antes de o arquivo ganhar nome, e da tag de título junto.
+- A prévia mostrava `Playlist/01 - …` pra um vídeo avulso, que na verdade ia direto pra pasta escolhida.
+
 ## [1.7.1] — 2026-09-15
 
 ### Alterado
