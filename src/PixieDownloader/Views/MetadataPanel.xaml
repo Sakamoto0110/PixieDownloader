@@ -7,14 +7,65 @@
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance vm:MainViewModel}"
              d:DesignWidth="340">
-    <!-- The metadata yt-dlp found for the previewed video. Each field: include it in the file? + an
-         expander with its value (disabled while excluded). The master is tri-state and persisted. -->
+    <UserControl.Resources>
+        <!-- A flat, borderless variant of the themed expander for these small rows. The header is the row's
+             own content (label + one-line preview); the arrow sits at the right. -->
+        <Style x:Key="MetadataRowExpander" TargetType="Expander">
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <DockPanel>
+                            <ToggleButton x:Name="tb" DockPanel.Dock="Top" Cursor="Hand" Content="{TemplateBinding Header}"
+                                          IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent" Padding="4,2">
+                                            <DockPanel>
+                                                <Path x:Name="arrow" DockPanel.Dock="Right" Data="M 0 0 L 4 4 L 8 0"
+                                                      Stroke="{StaticResource Brush.Text.Secondary}" StrokeThickness="1.5"
+                                                      VerticalAlignment="Center" Margin="8,0,2,0" RenderTransformOrigin="0.5,0.5"/>
+                                                <ContentPresenter VerticalAlignment="Center"/>
+                                            </DockPanel>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="arrow" Property="RenderTransform">
+                                                    <Setter.Value>
+                                                        <RotateTransform Angle="180"/>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="content" DockPanel.Dock="Bottom" Margin="4,4,4,0" Visibility="Collapsed"/>
+                        </DockPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="True">
+                                <Setter TargetName="content" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <!-- The metadata yt-dlp found for the previewed video. Each row: include it in the file? + an expander
+         with its value (disabled while excluded). The first row is the cover (Settings.Audio.EmbedThumbnail,
+         the same switch as "Embutir capa" in the advanced options); the master covers it too, is tri-state
+         and persisted. -->
     <StackPanel Visibility="{Binding HasMetadataItems, Converter={StaticResource BoolToVis}}">
         <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,1,0,0" Margin="0,0,0,10"/>
 
         <CheckBox IsThreeState="False" IsChecked="{Binding IncludeMetadataState, Mode=TwoWay}" FontWeight="SemiBold" Margin="0,0,0,6"
                   Content="Incluir metadados"
-                  ToolTip="Marcado: todos os campos abaixo vão pro arquivo. Desmarcado: nenhum (o mesmo que “Embutir metadados” nas opções avançadas). Meio-termo: alguns campos excluídos.">
+                  ToolTip="Marcado: a capa e todos os campos abaixo vão pro arquivo. Desmarcado: nada (o mesmo que desligar “Embutir capa” e “Embutir metadados” nas opções avançadas). Meio-termo: alguns de fora.">
             <CheckBox.Style>
                 <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
                     <Setter Property="Template">
@@ -56,72 +107,55 @@
             </CheckBox.Style>
         </CheckBox>
 
+        <!-- Capa: the video's thumbnail, embedded as the file's cover -->
+        <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,0,0,1" Padding="0,6">
+            <DockPanel>
+                <CheckBox DockPanel.Dock="Left" IsChecked="{Binding Settings.Audio.EmbedThumbnail, Mode=TwoWay}" VerticalAlignment="Top" Margin="0,2,0,0"
+                          ToolTip="Gravar a miniatura do vídeo como capa do arquivo"/>
+                <Expander Style="{StaticResource MetadataRowExpander}" Margin="4,0,0,0"
+                          IsExpanded="{Binding IsThumbnailExpanded, Mode=TwoWay}" IsEnabled="{Binding Settings.Audio.EmbedThumbnail}">
+                    <Expander.Header>
+                        <DockPanel>
+                            <TextBlock Text="Capa" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock Text="a miniatura do vídeo" Style="{StaticResource Hint}" Margin="8,0,0,0"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Expander.Header>
+                    <Border Background="{StaticResource Brush.Bg.Base}" CornerRadius="6" Padding="8,6">
+                        <Grid>
+                            <Image Source="{Binding PreviewThumbnailPath, Converter={StaticResource PathToImage}}" Stretch="Uniform"
+                                   MaxHeight="160" HorizontalAlignment="Left"/>
+                            <TextBlock Text="Sem miniatura pra mostrar" Style="{StaticResource Hint}"
+                                       Visibility="{Binding PreviewThumbnailPath, Converter={StaticResource NullToVis}}"/>
+                        </Grid>
+                    </Border>
+                </Expander>
+            </DockPanel>
+        </Border>
+
         <ItemsControl ItemsSource="{Binding MetadataItems}">
             <ItemsControl.ItemTemplate>
                 <DataTemplate DataType="{x:Type vm:MetadataItemViewModel}">
                     <Border BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,0,0,1" Padding="0,6">
-                        <StackPanel>
-                            <DockPanel>
-                                <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsIncluded, Mode=TwoWay}" VerticalAlignment="Center"
-                                          ToolTip="Incluir este campo no arquivo final"/>
-                                <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}" IsEnabled="{Binding IsIncluded}" Margin="4,0,0,0">
-                                    <Expander.Style>
-                                        <!-- A flat, borderless variant of the themed expander for these small rows -->
-                                        <Style TargetType="Expander">
-                                            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/>
-                                            <Setter Property="Template">
-                                                <Setter.Value>
-                                                    <ControlTemplate TargetType="Expander">
-                                                        <DockPanel>
-                                                            <ToggleButton x:Name="tb" DockPanel.Dock="Top" Cursor="Hand"
-                                                                          IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
-                                                                <ToggleButton.Template>
-                                                                    <ControlTemplate TargetType="ToggleButton">
-                                                                        <Border Background="Transparent" Padding="4,2">
-                                                                            <DockPanel>
-                                                                                <Path x:Name="arrow" DockPanel.Dock="Right" Data="M 0 0 L 4 4 L 8 0"
-                                                                                      Stroke="{StaticResource Brush.Text.Secondary}" StrokeThickness="1.5"
-                                                                                      VerticalAlignment="Center" Margin="8,0,2,0" RenderTransformOrigin="0.5,0.5"/>
-                                                                                <TextBlock Text="{Binding Label}" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                                                <TextBlock Text="{Binding Preview}" Style="{StaticResource Hint}" Margin="8,0,0,0"
-                                                                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                                                            </DockPanel>
-                                                                        </Border>
-                                                                        <ControlTemplate.Triggers>
-                                                                            <Trigger Property="IsChecked" Value="True">
-                                                                                <Setter TargetName="arrow" Property="RenderTransform">
-                                                                                    <Setter.Value>
-                                                                                        <RotateTransform Angle="180"/>
-                                                                                    </Setter.Value>
-                                                                                </Setter>
-                                                                            </Trigger>
-                                                                        </ControlTemplate.Triggers>
-                                                                    </ControlTemplate>
-                                                                </ToggleButton.Template>
-                                                            </ToggleButton>
-                                                            <ContentPresenter x:Name="content" DockPanel.Dock="Bottom" Margin="4,4,4,0" Visibility="Collapsed"/>
-                                                        </DockPanel>
-                                                        <ControlTemplate.Triggers>
-                                                            <Trigger Property="IsExpanded" Value="True">
-                                                                <Setter TargetName="content" Property="Visibility" Value="Visible"/>
-                                                            </Trigger>
-                                                            <Trigger Property="IsEnabled" Value="False">
-                                                                <Setter Property="Opacity" Value="0.45"/>
-                                                            </Trigger>
-                                                        </ControlTemplate.Triggers>
-                                                    </ControlTemplate>
-                                                </Setter.Value>
-                                            </Setter>
-                                        </Style>
-                                    </Expander.Style>
-                                    <Border Background="{StaticResource Brush.Bg.Base}" CornerRadius="6" Padding="8,6">
-                                        <TextBox Text="{Binding Value, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0"
-                                                 Background="Transparent" Padding="0" FontSize="12" MaxHeight="220"
-                                                 VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"/>
-                                    </Border>
-                                </Expander>
-                            </DockPanel>
-                        </StackPanel>
+                        <DockPanel>
+                            <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsIncluded, Mode=TwoWay}" VerticalAlignment="Top" Margin="0,2,0,0"
+                                      ToolTip="Incluir este campo no arquivo final"/>
+                            <Expander Style="{StaticResource MetadataRowExpander}" Margin="4,0,0,0"
+                                      IsExpanded="{Binding IsExpanded, Mode=TwoWay}" IsEnabled="{Binding IsIncluded}">
+                                <Expander.Header>
+                                    <DockPanel>
+                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Preview}" Style="{StaticResource Hint}" Margin="8,0,0,0"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                    </DockPanel>
+                                </Expander.Header>
+                                <Border Background="{StaticResource Brush.Bg.Base}" CornerRadius="6" Padding="8,6">
+                                    <TextBox Text="{Binding Value, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0"
+                                             Background="Transparent" Padding="0" FontSize="12" MaxHeight="220"
+                                             VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"/>
+                                </Border>
+                            </Expander>
+                        </DockPanel>
                     </Border>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>

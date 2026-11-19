@@ -58,6 +58,10 @@
                                     Command="{Binding RedoTemplateCommand}" ToolTip="Refazer (Ctrl+Y)"/>
                             <Button Content="Resetar" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12" Focusable="False" Margin="6,0,0,0"
                                     Command="{Binding ResetTemplateCommand}" ToolTip="Volta ao que Subpasta e Nome montam. Dá pra desfazer."/>
+                            <Button Content="{Binding MoreTokensButtonText}" Style="{StaticResource GhostButton}" Padding="9,3" FontSize="12"
+                                    Focusable="False" Margin="14,0,0,0"
+                                    Command="{Binding ToggleMoreTokensCommand}"
+                                    ToolTip="Mais campos do yt-dlp (artista, ano, duração, resolução…)"/>
                         </StackPanel>
                         <CheckBox Content="Personalizar" VerticalAlignment="Center"
                                   IsChecked="{Binding Settings.Paths.UseCustomTemplate, Mode=TwoWay}"
@@ -101,24 +105,18 @@
                             </TextBox>
                         </DockPanel>
                         <!-- Não focáveis: o clique não tira o cursor da caixa, então o campo entra onde ele está -->
-                        <DockPanel Margin="0,6,0,0">
-                            <Button DockPanel.Dock="Right" Content="{Binding MoreTokensButtonText}" Style="{StaticResource GhostButton}"
-                                    Padding="9,4" Margin="6,0,0,6" FontSize="12" Focusable="False" VerticalAlignment="Top"
-                                    Command="{Binding ToggleMoreTokensCommand}"
-                                    ToolTip="Mais campos do yt-dlp (artista, ano, duração, resolução…)"/>
-                            <ItemsControl ItemsSource="{Binding TokenPalette}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Button Content="{Binding Label}" ToolTip="{Binding ToolTip}" Style="{StaticResource GhostButton}"
-                                                Padding="9,4" Margin="0,0,6,6" FontSize="12" Focusable="False"
-                                                Click="OnInsertToken"/>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </DockPanel>
+                        <ItemsControl ItemsSource="{Binding TokenPalette}" Margin="0,6,0,0">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding Label}" ToolTip="{Binding ToolTip}" Style="{StaticResource GhostButton}"
+                                            Padding="9,4" Margin="0,0,6,6" FontSize="12" Focusable="False"
+                                            Click="OnInsertToken"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                         <ItemsControl ItemsSource="{Binding MoreTokenPalette}"
                                       Visibility="{Binding ShowMoreTokens, Converter={StaticResource BoolToVis}}">
                             <ItemsControl.ItemsPanel>

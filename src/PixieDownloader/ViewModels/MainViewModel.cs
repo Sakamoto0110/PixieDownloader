@@ -2606,12 +2606,21 @@ public sealed class MainViewModel : ObservableObject
         // "Embutir metadados (ID3)" in the advanced options is the same switch as the preview panel's master.
         if (e.PropertyName == nameof(AudioSettings.EmbedMetadata))
             SyncMetadataItemsFromSettings();
+        // "Embutir capa" there is the panel's "Capa" row, which the master counts too.
+        if (e.PropertyName == nameof(AudioSettings.EmbedThumbnail))
+        {
+            if (!Settings.Audio.EmbedThumbnail)
+                IsThumbnailExpanded = false;   // an excluded row's expander is disabled — never leave it open
+            if (!_syncingMetadata)
+                OnPropertyChanged(nameof(IncludeMetadataState));
+        }
     }
 
     // ───────────────────────── Metadados (painel de pré-visualização) ─────────────────────────
     // The fields yt-dlp found for the previewed video, each with "include in the file" + an expander for
     // its value. Unchecking a field adds its key to Settings.Audio.ExcludedMetadataFields (persisted, so
-    // it applies to every future download); the tri-state master mirrors Settings.Audio.EmbedMetadata.
+    // it applies to every future download). Above them, a "Capa" row is Settings.Audio.EmbedThumbnail (the
+    // advanced options' "Embutir capa"). The tri-state master covers both.
 
     public ObservableCollection<MetadataItemViewModel> MetadataItems { get; } = [];
     public bool HasMetadataItems => MetadataItems.Count > 0;
@@ -2619,20 +2628,19 @@ public sealed class MainViewModel : ObservableObject
     private bool _syncingMetadata;
 
     /// <summary>
-    /// Master checkbox: true = every listed field goes in, false = nothing is embedded, null = some fields
-    /// are excluded. Setting it true clears the exclusions of the listed fields; false excludes them all and
-    /// turns metadata embedding off.
+    /// Master checkbox: true = the cover and every listed field go in, false = nothing is embedded, null = some
+    /// rows are off. Setting it true clears the exclusions of the listed fields and turns metadata and cover
+    /// embedding on; false excludes them all and turns both off.
     /// </summary>
     public bool? IncludeMetadataState
     {
         get
         {
-            if (!Settings.Audio.EmbedMetadata)
-                return false;
-            if (MetadataItems.Count == 0)
-                return true;
-            var included = MetadataItems.Count(m => m.IsIncluded);
-            return included == MetadataItems.Count ? true : included == 0 ? false : null;
+            // The rows are the cover (Settings.Audio.EmbedThumbnail) and the listed fields.
+            var cover = Settings.Audio.EmbedThumbnail ? 1 : 0;
+            var fields = Settings.Audio.EmbedMetadata ? MetadataItems.Count(m => m.IsIncluded) : 0;
+            var included = cover + fields;
+            return included == 1 + MetadataItems.Count ? true : included == 0 ? false : null;
         }
         set
         {
@@ -2648,10 +2656,19 @@ public sealed class MainViewModel : ObservableObject
                     item.SetIncludedSilently(on);
                 }
                 Settings.Audio.EmbedMetadata = on;
+                Settings.Audio.EmbedThumbnail = on;
             }
             finally { _syncingMetadata = false; }
             OnPropertyChanged();
         }
+    }
+
+    private bool _isThumbnailExpanded;
+    /// <summary>The "Capa" row's expander (shows the thumbnail that goes in as the cover).</summary>
+    public bool IsThumbnailExpanded
+    {
+        get => _isThumbnailExpanded;
+        set => SetProperty(ref _isThumbnailExpanded, value);
     }
 
     /// <summary>Rebuilds the list for the video currently in the preview (single video or the selected playlist row).</summary>
@@ -2666,6 +2683,8 @@ public sealed class MainViewModel : ObservableObject
             {
                 if (!source.TryGetValue(def.Key, out var value))
                     continue;
+                if (def.Key == "title")
+                    value = TitleCleanup.StripMediaExtension(value);   // what the download writes (--replace-in-metadata)
                 var included = Settings.Audio.EmbedMetadata && !excluded.Contains(def.Key);
                 MetadataItems.Add(new MetadataItemViewModel(def, value, included, OnMetadataItemToggled));
             }
