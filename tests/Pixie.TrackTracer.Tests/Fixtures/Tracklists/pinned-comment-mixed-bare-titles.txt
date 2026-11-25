@@ -1,0 +1,37 @@
+# title: Mixed bare titles in the uploader's pinned comment
+# expect: source=PinnedComment shape=PlainTitles count=33 first=Resonance - Give Me Some More author=@uploader
+# candidates: 1
+--- comment pinned uploader author=@uploader ---
+Resonance - Give Me Some More
+retake
+Rihanna -  Disturbia [AmbVsh remix]
+Rihanna - Bitch Better Have My Money (Stranger Bootleg) [Free DL]
+Rihanna - Pon de Replay (AmbVsh Remix)
+Ripped
+Riptide [150bpm]
+Riton Feat. Kah - Lo - Rinse & Repeat  ichmeinjogi Bootleg
+Robert Miles - Children (Final Flight Intro Edit)
+Rockstar
+sad girlz luv money remix
+Sascha Audit - Extase (Andre Drath Remix) [Ravenous]
+Schleini & Floerk - Shadows
+Schleini - C'est La Vie [HARDTEKK]
+Sebastian Groth - Codes (Markus Weigelt Remix)FREE DOWNLOAD
+Sebastian Luther, Herr Steiner - Gone Fast (Stubbie Remix)
+SEXX IN UBER
+Shake Your Body
+Shinsky x Dima - Subwoofer (envy remix)
+Sia - Chandelier ( Sutura Remix)
+SIA - MOVE YOUR BODYREZIDIV Rmx
+Silhouette Challenge (ABSOLUTION BOOTLEG)
+sn758
+So many times
+Solo - Dj Phish Nrg bootleg
+SOMEBODY`S WATCHING ME
+Song Of The 4ncient
+songnames.txt
+Soulchef - write this down x dead wrong (biggie smalls)
+Souly - 9pm Frankfurter Tor (Grassbox Hardtekk Bootleg)
+Speak to yourself
+Spongebob - Jellyfish Jam (Baarz April 1st Bootleg) [FREE DL]
+SPOOKY SCARY SKELETONS  (TECHNO BOOTLEG)

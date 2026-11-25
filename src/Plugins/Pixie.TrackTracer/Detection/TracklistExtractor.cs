@@ -124,6 +124,7 @@ public static class TracklistExtractor
     {
         public int Start;
         public Family Family;
+        public bool PlainTitleContext;        // most lines in this uninterrupted text run look like music titles
         public readonly List<TracklistLine> Entries = [];
         public TracklistLine? Header;         // the header line found just above the block
         public bool ForeignHeader;            // a "Follow me:"-style header just above instead
@@ -139,13 +140,14 @@ public static class TracklistExtractor
         int i = 0;
         while (i < lines.Count)
         {
-            if (!CanStart(lines, i))
+            bool plainTitleContext = HasPlainTitleContext(lines, i);
+            if (!plainTitleContext && !CanStart(lines, i))
             {
                 i++;
                 continue;
             }
 
-            var block = new Block { Start = i, Family = FamilyOf(lines[i].Kind) };
+            var block = new Block { Start = i, Family = FamilyOf(lines[i].Kind), PlainTitleContext = plainTitleContext };
             LookAboveForHeader(block, lines);
 
             int j = i;
@@ -193,6 +195,24 @@ public static class TracklistExtractor
 
     private static Family FamilyOf(LineKind kind) =>
         kind is LineKind.Timestamped or LineKind.TrailingTime ? Family.Timed : Family.Listed;
+
+    /// <summary>
+    /// A headerless list may mix "Artist - Title" and remix tags with undecorated titles. Judge the
+    /// uninterrupted run together so the undecorated lines do not split it into tiny candidates.
+    /// Blanks, section headers, links and long prose remain boundaries; a majority must look like music.
+    /// </summary>
+    private static bool HasPlainTitleContext(List<TracklistLine> lines, int start)
+    {
+        int count = 0;
+        int titleLike = 0;
+        for (int i = start; i < lines.Count && lines[i].Kind == LineKind.Text && lines[i].Norm.Length <= 100; i++)
+        {
+            count++;
+            if (lines[i].HasSeparator || TracklistLine.HasTitleTag(lines[i].Text))
+                titleLike++;
+        }
+        return count >= 3 && titleLike * 2 >= count;
+    }
 
     private static bool CanStart(List<TracklistLine> lines, int i)
     {
@@ -285,7 +305,7 @@ public static class TracklistExtractor
                         return Fit.Add;                                  // title/link pair
                     if (acrossGap)
                         return Fit.No;                                   // a blank line ends a list of bare titles
-                    return block.Header is not null || line.HasSeparator ? Fit.Add : Fit.No;
+                    return block.Header is not null || block.PlainTitleContext || line.HasSeparator ? Fit.Add : Fit.No;
                 }
             default:
                 return Fit.No;

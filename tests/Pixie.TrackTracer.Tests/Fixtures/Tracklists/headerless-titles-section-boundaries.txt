@@ -1,0 +1,13 @@
+# title: Bare titles at both ends, followed by a separate social section
+# expect: source=PinnedComment shape=PlainTitles count=5 first=Intro author=@uploader
+# candidates: 1
+--- comment pinned uploader author=@uploader ---
+Intro
+Artist One - First Song
+Second Song (Club Remix)
+Artist Three - Third Song
+Outro
+
+Follow me:
+Instagram: @uploader
+Thanks for listening!

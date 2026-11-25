@@ -16,7 +16,7 @@
     <!-- No plugin.json: the host reads id (folder), name, version, apiVersion and the entry class from the -->
     <!-- assembly's metadata. So this is the plugin's version, AssemblyTitle is what the Plugins tab shows, and -->
     <!-- Description is what the store ("Plugins oficiais") shows — release-plugin.ps1 copies it into plugins.json. -->
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <AssemblyTitle>TrackTracer</AssemblyTitle>
     <Description>Acha a tracklist de um mix na descrição ou nos comentários do vídeo, mostra as fontes numa aba, expande os links da lista (um mix dentro do mix, até a profundidade que você escolher) e grava as faixas como capítulos no MP3 baixado.</Description>
     <EnableDynamicLoading>true</EnableDynamicLoading>
